@@ -1,4 +1,5 @@
 import Random
+using Infiltrator
 
 export datagen_structured_obs_room
 """
@@ -142,7 +143,7 @@ function validate_seq(x::AbstractArray, a::AbstractArray, n_clones::Union{Nothin
         @assert eltype(n_clones) == Int64
         @assert all(n_clones .> 0) "You can't provide zero clones for any emission"
         n_emissions = length(n_clones)
-        @assert x .<= n_emissions "Number of emissions inconsistent with training sequence"
+        @assert all(x .<= n_emissions) "Number of emissions inconsistent with training sequence"
     end
 end
 
