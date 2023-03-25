@@ -1,192 +1,6 @@
-using ProgressMeter
-using Statistics
 
-"""
-    datagen_structured_obs_room(
-        room::Array{Int},
-        start_r::Union{Int, Nothing}=nothing,
-        start_c::Union{Int, Nothing}=nothing,
-        no_left::Array{Tuple{Int,Int}}=[],
-        no_right::Array{Tuple{Int,Int}}=[],
-        no_up::Array{Tuple{Int,Int}}=[],
-        no_down::Array{Tuple{Int,Int}}=[],
-        length::Int=10000,
-        seed::Int=42
-    )
 
-Generate a sequence of observations and actions in a structured environment.
-
-# Arguments
-- `room`: A 2d numpy array. inaccessible locations are marked by -1.
-- `start_r`, `start_c`: Starting locations.
-- `no_left`, `no_right`, `no_up`, `no_down`: Invisible obstructions in the room
-which disallows certain actions from certain states.
-- `length`: Length of the sequence.
-- `seed`: Random seed.
-
-# Returns
-- `actions`: An array of integers representing the actions.
-- `x`: An array of integers representing the observations.
-- `rc`: An array of integers representing the actual r&c.
-
-"""
-function datagen_structured_obs_room(
-    room::Array{Int},
-    start_r::Union{Int, Nothing}=nothing,
-    start_c::Union{Int, Nothing}=nothing,
-    no_left::Array{Tuple{Int,Int}}=[],
-    no_right::Array{Tuple{Int,Int}}=[],
-    no_up::Array{Tuple{Int,Int}}=[],
-    no_down::Array{Tuple{Int,Int}}=[],
-    length::Int=10000,
-    seed::Int=42
-)
-    # room is a 2d numpy array. inaccessible locations are marked by -1.
-    # start_r, start_c: starting locations
-    # In addition, there are invisible obstructions in the room which disallows
-    # certain actions from certain states.
-    # no_left:
-    # no_right:
-    # no_up:
-    # no_down:
-    # Each of the above are list of states from which the corresponding action
-    # is not allowed.
-
-    np.random.seed(seed)
-    H, W = size(room)
-    if start_r === nothing || start_c === nothing
-        start_r, start_c = rand(1:H), rand(1:W)
-    end
-
-    actions = zeros(Int, length)
-    x = zeros(Int, length)  # observations
-    rc = zeros(Int, length, 2)  # actual r&c
-
-    r, c = start_r, start_c
-    x[1] = room[r, c]
-    rc[1, 1], rc[1, 2] = r, c
-
-    count = 0
-    while count < length - 1
-
-        act_list = [0, 1, 2, 3]  # 0: left, 1: right, 2: up, 3: down
-        if (r, c) in no_left
-            deleteat!(act_list, findall(x->x==0, act_list))
-        end
-        if (r, c) in no_right
-            deleteat!(act_list, findall(x->x==1, act_list))
-        end
-        if (r, c) in no_up
-            deleteat!(act_list, findall(x->x==2, act_list))
-        end
-        if (r, c) in no_down
-            deleteat!(act_list, findall(x->x==3, act_list))
-        end
-
-        a = rand(act_list)
-
-        # Check for actions taking out of the matrix boundary.
-        prev_r = r
-        prev_c = c
-        if a == 0 && 0 < c
-            c -= 1
-        elseif a == 1 && c < W - 1
-            c += 1
-        elseif a == 2 && 0 < r
-            r -= 1
-        elseif a == 3 && r < H - 1
-            r += 1
-        end
-
-        # Check whether action is taking to inaccessible states.
-        temp_x = room[r, c]
-        if temp_x == -1
-            r = prev_r
-            c = prev_c
-            continue
-        end
-
-        actions[count+1] = a
-        x[count + 2] = room[r, c]
-        rc[count + 2, 1], rc[count + 2, 2] = r, c
-        count += 1
-    end
-
-    return actions, x, rc
-end
-
-"""
-    validate_seq(x::AbstractArray, a::AbstractArray, n_clones::Union{Nothing, AbstractArray}=nothing)
-
-Validate an input sequence of observations `x` and actions `a`.
-
-# Arguments
-- `x`: An array of integers representing the observations.
-- `a`: An array of integers representing the actions.
-- `n_clones`: An array of integers representing the number of clones for each emission.
- If `nothing`, then the number of clones is assumed to be 1 for each emission.
- If provided, then the number of clones must be greater than 0 for each emission.
- The number of emissions is assumed to be the maximum value of `x`.
- The number of emissions must be less than or equal to the length of `n_clones`.
-The number of emissions must be less than or equal to the maximum value of `x`.
-"""
-function validate_seq(x::AbstractArray, a::AbstractArray, n_clones::Union{Nothing, AbstractArray}=nothing)
-    # Validate an input sequence of observations x and actions a
-    @assert length(x) == length(a) > 0
-    @assert ndims(x) == ndims(a) == 1 "Flatten your array first"
-    @assert eltype(x) == eltype(a) == Int64
-    @assert minimum(x) ≥ 0 "Number of emissions inconsistent with training sequence"
-    if n_clones !== nothing
-        @assert ndims(n_clones) == 1 "Flatten your array first"
-        @assert eltype(n_clones) == Int64
-        @assert all(n_clones .> 0) "You can't provide zero clones for any emission"
-        n_emissions = length(n_clones)
-        @assert x .<= n_emissions "Number of emissions inconsistent with training sequence"
-    end
-end
-
-"""
-    CHMM(n_clones::Array{Int64}, x::Array{Int64}, a::Array{Int64},
-        pseudocount::Float64=0.0, dtype::DataType=Float32,
-        seed::Int64=42)
-
-Create a new CHMM object.
-
-# Arguments
-- `n_clones`: An array of integers representing the number of clones for each emission.
-- `x`: An array of integers representing the observations.
-- `a`: An array of integers representing the actions.
-- `pseudocount`: A float representing the pseudocount to add to the transition matrix.
-- `dtype`: The data type to use for the transition matrix.
-- `seed`: The seed to use for the random number generator.
-
-# Returns
-A new CHMM object.
-"""
-struct CHMM
-    n_clones::Array{Int64}
-    pseudocount::Float64
-    dtype::DataType
-    C::Array{Float64, 3}
-    Pi_x::Array{Float64, 1}
-    Pi_a::Array{Float64, 1}
-end
-function CHMM(n_clones::Array{Int64}, x::Array{Int64}, a::Array{Int64},
-		pseudocount::Float64=0.0, dtype::DataType=Float32,
-	seed::Int64=42)
-    srand(seed)
-    validate_seq(x, a, n_clones)
-    @assert pseudocount >= 0.0 "The pseudocount should be positive"
-    println("Average number of clones: ", mean(n_clones))
-    n_states = sum(n_clones)
-    n_actions = maximum(a) + 1
-    C = rand(Float64, n_actions, n_states, n_states)
-    Pi_x = fill(1/n_states, n_states)
-    Pi_a = fill(1/n_actions, n_actions)
-
-    new(n_clones, pseudocount, dtype, C, Pi_x, Pi_a)
-end
-
+export update_T
 """
     update_T(self::CHMM)
 
@@ -225,6 +39,7 @@ function update_E(self::CHMM, CE)
 end
 
 
+export bps
 """
     bps(self::CHMM, x::AbstractArray, a::AbstractArray)
 
@@ -242,32 +57,36 @@ function bps(self::CHMM, x::AbstractArray, a::AbstractArray)
     return -log2_lik
 end
 
+export bpsE
+"""Compute the log likelihood using an alternate emission matrix."""
 function bpsE(self, E, x, a)
-    """Compute the log likelihood using an alternate emission matrix."""
     validate_seq(x, a, self.n_clones)
     log2_lik, _ = forwardE(permutedims(self.T, (1, 3, 2)), E, self.Pi_x, self.n_clones, x, a)
     return -log2_lik[1]
 end
 
+export bpsV
 function bpsV(x, a, n_clones, T, Pi_x)
     validate_seq(x, a, n_clones)
     log2_lik = forward_mp(permutedims(T, (1,3,2)), Pi_x, n_clones, x, a)[1]
     return -log2_lik
 end
 
+export decode
+"""
+Compute the MAP assignment of latent variables using max-product message passing.
+"""
 function decode(x, a, n_clones, T, Pi_x)
-    """
-    Compute the MAP assignment of latent variables using max-product message passing.
-    """
     log2_lik, mess_fwd = forward_mp(permutedims(T, (1,3,2)), Pi_x, n_clones, x, a, true)
     states = backtrace(T, n_clones, x, a, mess_fwd)
     return -log2_lik, states
 end
 
 
+export decodeE
+"""Compute the MAP assignment of latent variables using max-product message passing
+with an alternative emission matrix."""
 function decodeE(self, E, x, a)
-    """Compute the MAP assignment of latent variables using max-product message passing
-    with an alternative emission matrix."""
     log2_lik, mess_fwd = forwardE_mp(
         permutedims(self.T, (1, 3, 2)),
         E,
@@ -281,8 +100,9 @@ function decodeE(self, E, x, a)
     return -log2_lik, states
 end
 
+export learn_em
+"""Run EM training, keeping E deterministic and fixed, learning T"""
 function learn_em_T(self, x, a, n_iter=100, term_early=true)
-    """Run EM training, keeping E deterministic and fixed, learning T"""
     convergence = []
     log2_lik_old = -Inf
     @showprogress for it in 1:n_iter
@@ -310,32 +130,7 @@ function learn_em_T(self, x, a, n_iter=100, term_early=true)
 end
 
 
-function decodeE(model::SingleCellModel, E::AbstractMatrix{T}, x::AbstractVector{S}, a::AbstractVector{S}) where {T<:Real, S<:Integer}
-    """Compute the MAP assignment of latent variables using max-product message passing
-    with an alternative emission matrix."""
-    log2_lik, mess_fwd = forwardE_mp(
-l.Pi_x,
-            model.n_clones,
-            x,
-            a,
-            store_messages=true,
-        )
-        mess_bwd = backward(model.T, model.n_clones, x, a)
-        updateC(model.C, model.T, model.n_clones, mess_fwd, mess_bwd, x, a)
-        # M
-        model.update_T()
-        push!(convergence, -mean(log2_lik))
-        pbar[1].message = "train_bps=$(convergence[end])"
-        if mean(log2_lik) ≤ log2_lik_old
-            if term_early
-                break
-            end
-        end
-        log2_lik_old = mean(log2_lik)
-    end
-    return convergence
-end
-
+export learn_viterbi_T
 """
     learn_viterbi_T(model::CHMM, x::AbstractArray, a::AbstractArray, n_iter::Int=100)
 
@@ -350,13 +145,13 @@ Run Viterbi training, keeping E deterministic and fixed, learning T
 # Returns
 - `convergence`: A vector of the log likelihood of the training data at each iteration.
 """
-function learn_viterbi_T(self, x, a, n_iter=100)
+function learn_viterbi_T(self::CHMM, x, a, n_iter=100)
     """Run Viterbi training, keeping E deterministic and fixed, learning T"""
     flush(stdout)
     convergence = []
     pbar = tqdm(n_iter, position=0)
     log2_lik_old = -Inf
-    for it in pbar
+    @showprogress  "learn_viterbi" for _ in pbar
         # E
         log2_lik, mess_fwd = forward_mp(
             permutedims(self.T, (1, 3, 2)),
@@ -375,6 +170,7 @@ function learn_viterbi_T(self, x, a, n_iter=100)
                 states[t]
             )  # at time t-1 -> t we go from observation i to observation j
             self.C[aij, i, j] += 1.0
+        end
         # M
         update_T(self)
 
@@ -388,8 +184,7 @@ function learn_viterbi_T(self, x, a, n_iter=100)
     return convergence
 end
 
-
-
+export learn_em_E
 """
     learn_em_E(x, a; n_iter=100, pseudocount_extra=1e-20)
 
@@ -436,6 +231,7 @@ function learn_em_E(x, a; n_iter=100, pseudocount_extra=1e-20)
     return convergence, E
 end
 
+export sample
 """
     sample(self, length)
 
@@ -452,7 +248,7 @@ Sample from the CHMM.
 function sample(self, length)
     """Sample from the CHMM."""
     @assert length > 0
-    state_loc = cumsum(vcat([0], self.n_clones)))
+    state_loc = cumsum(vcat([0], self.n_clones))
     sample_x = zeros(Int64, length)
     sample_a = rand(self.Pi_a, length)
 
@@ -467,6 +263,7 @@ function sample(self, length)
 end
 
 
+export sample_sym
 """
     sample_sym(self, sym, length)
 
@@ -484,7 +281,7 @@ function sample_sym(self, sym, length)
     """Sample from the CHMM conditioning on an inital observation."""
     # Prepare structures
     @assert length > 0
-    state_loc = cumsum(vcat([0], self.n_clones)))
+    state_loc = cumsum(vcat([0], self.n_clones)) #was an error here, TODO check
 
     seq = [sym]
 
@@ -510,6 +307,7 @@ function sample_sym(self, sym, length)
     return seq
 end
 
+export bridge
 """
     bridge(self, state1, state2, max_steps=100)
 
@@ -534,6 +332,7 @@ function bridge(self, state1, state2, max_steps=100)
     return s_a
 end
 
+export updateCE
 """
     updateCE(CE, E, n_clones, mess_fwd, mess_bwd, x, a)
 
@@ -552,6 +351,7 @@ function updateCE(CE, E, n_clones, mess_fwd, mess_bwd, x, a)
     end
 end
 
+export forwardE
 """
     forwardE(T_tr, E, Pi, n_clones, x, a, store_messages=false)
 
@@ -602,6 +402,7 @@ function forwardE(T_tr, E, Pi, n_clones, x, a, store_messages=false)
         if store_messages
             mess_fwd[t, :] = message
         end
+    end
     if store_messages
         return log2_lik, mess_fwd
     else
@@ -609,6 +410,7 @@ function forwardE(T_tr, E, Pi, n_clones, x, a, store_messages=false)
     end
 end
 
+export backwardE
 """
     backwardE(T, E, n_clones, x, a)
 
@@ -642,9 +444,11 @@ function backwardE(T, E, n_clones, x, a)
         @assert p_obs > 0
         message ./= p_obs
         mess_bwd[t, :] .= message
+    end
     return mess_bwd
 end
 
+export udpateC
 """
     updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a)
 
@@ -682,6 +486,7 @@ function updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a)
 end
 
 
+export forward
 """
     forward(T_tr, Pi, n_clones, x, a, store_messages=false)
 
@@ -741,6 +546,7 @@ function forward(T_tr, Pi, n_clones, x, a, store_messages=false)
     return log2_lik, mess_fwd
 end
 
+export backward
 """
     backward(T_tr, n_clones, x, a)
 
@@ -785,10 +591,12 @@ function backward(T, n_clones, x, a)
         message /= p_obs
         t_start, t_stop = mess_loc[t:t+1]
         mess_bwd[t_start:t_stop] .= message
+    end
     return mess_bwd
 end
 
 
+export forward_mp
 """
     forward_mp(T_tr, Pi, n_clones, x, a, store_messages=false)
 
@@ -850,6 +658,7 @@ function forward_mp(T_tr::Array{Float64, 3}, Pi::Array{Float64, 1}, n_clones::Ar
     return log2_lik, mess_fwd
 end
 
+export rargmax
 """
     rargmax(x::AbstractVector{T}) where T <: Real
 
@@ -864,6 +673,7 @@ function rargmax(x::AbstractVector{T}) where T <: Real
 end
 
 
+export bactrace
 """
     backward_mp(T, n_clones, x, a, mess_fwd)
 
@@ -910,11 +720,13 @@ function backtrace(T, n_clones, x, a, mess_fwd)
         belief = mess_fwd[t_start:t_stop] .* T[aij, i_start:i_stop, 
                                                j_start+code[t+1]]
         code[t] = rargmax(belief)
+    end
     states = state_loc[x] .+ code
     return states
 end
 
 
+export backward_mp
 """
     backward_mp(T, n_clones, x, a, mess_fwd)
 
@@ -958,10 +770,12 @@ belief = mess_fwd[t]
         aij = a[t]  # at time t -> t+1 we go from observation i to observation j
         belief = mess_fwd[t] .* T[aij, :, states[t + 1]]
         states[t] = rargmax(belief)
+    end
     return states
 end
 
 
+export forwardE_mp
 """
     forward_mp(T_tr::Array{T, 3}, Pi::Array{T, 1}, n_clones::Array{T, 1},
     x::Array{T, 1}, a::Array{T, 1}, store_messages::Bool=false) where T<:Real
@@ -980,8 +794,8 @@ Compute forward messages.
 - `message`: The messages if store_messages is true.
 """
 function forwardE_mp(T_tr::Array{T, 3}, E::Array{T, 2}, Pi::Array{T, 1},
-        n_clones::Vector{Int, 1}, x::Vector{Int, 1}, a::Vector{Int, 1},
-        store_messages::Bool=false) where T<:Real
+        n_clones::Vector{Int}, x::Vector{Int}, a::Vector{Int},
+        store_messages::Bool=false) where T <: Real
     # Log-probability of a sequence, and optionally, messages
     @assert sum(n_clones) == size(E, 1) && length(n_clones) == size(E, 2)
     dtype = typeof(T_tr[1,1,1])
@@ -1016,6 +830,7 @@ function forwardE_mp(T_tr::Array{T, 3}, E::Array{T, 2}, Pi::Array{T, 1},
 end
 
 
+export forward_mp_all
 """
     forward_mp_all(T_tr, Pi_x, Pi_a, n_clones, target_state, max_steps)
 
@@ -1070,6 +885,7 @@ function forward_mp_all(T_tr, Pi_x, Pi_a, n_clones, target_state, max_steps)
 end
 
 
+export backtrace_all
 """
     backtrace_all(T, Pi_a, n_clones, mess_fwd, target_state)
 
@@ -1089,7 +905,7 @@ belief at each time step and then finds the action that maximizes the belief.
 - `actions`: The sequence of actions.
 """
 function backtrace_all(T, Pi_a, n_clones, mess_fwd, target_state)
-    states = zeros(Int64, size(mess_fwd)[1])
+    states  = zeros(Int64, size(mess_fwd)[1])
     actions = zeros(Int64, size(mess_fwd)[1])
     n_states = size(T)[2]
     # backward pass
