@@ -1,0 +1,47 @@
+# Python implementation (reference only - not actively maintained)
+python/*
+!python/README.md
+
+# Python artifacts
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Julia
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+/Manifest.toml  # Allow top-level, but ignore in subprojects
+deps/deps.jl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Output
+figures/
+*.png
+*.pdf
+
+# Temporary files
+*.tmp
+*.bak
+.mind/

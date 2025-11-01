@@ -1,7 +1,0 @@
-numpy
-matplotlib
-numba
-tqdm
-jupyter
-jupytext
-scipy
