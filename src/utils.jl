@@ -28,17 +28,16 @@ which disallows certain actions from certain states.
 # Returns
 - `actions`: An array of integers representing the actions.
 - `x`: An array of integers representing the observations.
-- `rc`: An array of integers representing the actual r&c.
+- `rc`: An array of integers representing the actual r&c, where r and c means
 
 """
-function datagen_structured_obs_room(
-    room::Array{Int},
+function datagen_structured_obs_room(room::Array{Int};
     start_r::Union{Int, Nothing}=nothing,
     start_c::Union{Int, Nothing}=nothing,
-    no_left::Array{Tuple{Int,Int}}=[],
-    no_right::Array{Tuple{Int,Int}}=[],
-    no_up::Array{Tuple{Int,Int}}=[],
-    no_down::Array{Tuple{Int,Int}}=[],
+    no_left::Array{Tuple{Int,Int}}  = Vector{Tuple{Int,Int}}(),
+    no_right::Array{Tuple{Int,Int}} = Vector{Tuple{Int,Int}}(),
+    no_up::Array{Tuple{Int,Int}}    = Vector{Tuple{Int,Int}}(),
+    no_down::Array{Tuple{Int,Int}}  = Vector{Tuple{Int,Int}}(),
     length::Int=10000,
     seed::Int=42
 )
@@ -60,7 +59,7 @@ function datagen_structured_obs_room(
     end
 
     actions = zeros(Int, length)
-    x = zeros(Int, length)  # observations
+    x  = zeros(Int, length)  # observations
     rc = zeros(Int, length, 2)  # actual r&c
 
     r, c = start_r, start_c
@@ -86,16 +85,20 @@ function datagen_structured_obs_room(
 
         a = rand(act_list)
 
+        C = [1, W]
+        R = [1, H]
+
+
         # Check for actions taking out of the matrix boundary.
         prev_r = r
         prev_c = c
-        if a == 0 && 0 < c
+        if a == 0 && C[1] < c
             c -= 1
-        elseif a == 1 && c < W - 1
+        elseif a == 1 && c < C[end]
             c += 1
-        elseif a == 2 && 0 < r
+        elseif a == 2 && R[1] < r
             r -= 1
-        elseif a == 3 && r < H - 1
+        elseif a == 3 && r < R[end]
             r += 1
         end
 
@@ -112,6 +115,9 @@ function datagen_structured_obs_room(
         rc[count + 2, 1], rc[count + 2, 2] = r, c
         count += 1
     end
+
+    actions, x = actions .+ 1, x .+ 1 # original code was python, but julia
+                                    # indexes at 1
 
     return actions, x, rc
 end
@@ -143,7 +149,18 @@ function validate_seq(x::AbstractArray, a::AbstractArray, n_clones::Union{Nothin
         @assert eltype(n_clones) == Int64
         @assert all(n_clones .> 0) "You can't provide zero clones for any emission"
         n_emissions = length(n_clones)
-        @assert all(x .<= n_emissions) "Number of emissions inconsistent with training sequence"
+        @assert maximum(x) <= n_emissions "Number of emissions inconsistent with training sequence"
     end
 end
 
+
+export boundary_index_range
+"""
+Grab a range when boundaries are encoded as pythonic
+start points
+"""
+function boundary_index_range(clonal_boundaries::Vector{<:Int}, 
+        observation::T where T <: Int)
+    start, stop = clonal_boundaries[observation:observation+1]  .+ (1, 0)
+    start:stop
+end

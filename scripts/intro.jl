@@ -1,7 +1,7 @@
-using chmm
+using ClonalMarkov
 using LinearAlgebra, Random
 import PyPlot, LightGraphs
-using DrWatson
+using DrWatson, Plots
 
 include("helpers.jl")
 include(scriptsdir("helpers.jl"))
@@ -33,8 +33,8 @@ OBS = 2
 obs = rand(1:OBS, TIMESTEPS)  # Observations. Replace with your data.
 n_clones = fill(5, OBS)  # Number of clones specifies the capacity for each observation.
 
-x = rand(1:OBS, TIMESTEPS)  # Training observations. Replace with your data.
-a = zeros(Int, TIMESTEPS)
+x      = rand(1:OBS, TIMESTEPS)  # Training observations. Replace with your data.
+a      = zeros(Int, TIMESTEPS)
 x_test = rand(1:OBS, TIMESTEPS)  # Test observations. Replace with your data.
 a_test = zeros(Int, TIMESTEPS)
 
@@ -46,21 +46,30 @@ chmm = CHMM(n_clones, x, a, pseudocount=1e-10)  # Initialize the model
 
 
 room = [
-    [1, 2, 3, 0, 3, 1, 1, 1],
-    [1, 1, 3, 2, 3, 2, 3, 1],
-    [1, 1, 2, 0, 1, 2, 1, 0],
-    [0, 2, 1, 1, 3, 0, 0, 2],
-    [3, 3, 1, 0, 1, 0, 3, 0],
-    [2, 1, 2, 3, 3, 3, 2, 0]
+    1 2 3 0 3 1 1 1;
+    1 1 3 2 3 2 3 1;
+    1 1 2 0 1 2 1 0;
+    0 2 1 1 3 0 0 2;
+    3 3 1 0 1 0 3 0;
+    2 1 2 3 3 3 2 0;
 ]
-room = np.array(room)
-n_emissions = room.max() + 1
+n_emissions = maximum(room) + 1
 
-a, x, rc = datagen_structured_obs_room(room, length=50000)
+a, x, rc = ClonalMarkov.datagen_structured_obs_room(room)
+
+using Interact, Blink
+ui = @manipulate for i in axes(rc, 1)
+    plot(eachcol(rc)...)
+    scatter!([rc[i, 1]], [rc[i, 2]], color="red", marker="x", markersize=10,
+            label="")
+end
+w = Window()
+body!(w, ui)
+
 
 n_clones = fill(70, n_emissions)
-chmm = CHMM(n_clones=n_clones, pseudocount=2e-3, x=x, a=a, seed=42)  # Initialize the model
-progression = chmm.learn_em_T(x, a, n_iter=1000)  # Training
+chmm = CHMM(n_clones, x, a; pseudocount=2e-3, seed=42)  # Initialize the model
+progression = learn_em_T(chmm, x, a; n_iter=1000)  # Training
 
 
 # In[5]:
