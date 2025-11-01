@@ -1,6 +1,5 @@
 using ClonalMarkov
 using LinearAlgebra, Random
-import PyPlot, LightGraphs
 using DrWatson, Plots
 
 include("helpers.jl")
@@ -77,14 +76,15 @@ progression = learn_em_T(chmm, x, a; n_iter=1000)  # Training
 # Refine learning
 
 chmm.pseudocount = 0.0
-chmm.learn_viterbi_T(x, a, n_iter=100)
+progression2 = learn_viterbi_T(chmm, x, a, 100)
 
 
 # In[6]:
 
-cmap = colors.ListedColormap(custom_colors[-4:])
-plt.matshow(room, cmap=cmap)
-plt.savefig("figures/rectangular_room_layout.pdf")
+# Visualize room layout
+heatmap(room', c=cgrad(:Spectral), aspect_ratio=:equal,
+        title="Rectangular Room Layout")
+savefig("figures/rectangular_room_layout.pdf")
 
 
 # In[7]:
@@ -92,7 +92,7 @@ plt.savefig("figures/rectangular_room_layout.pdf")
 # In[8]:
 
 # plot graph
-graph = plot_graph(chmm, x, a, output_file="figures/rectangular_room_graph.pdf", cmap=cmap)
+graph = plot_graph(chmm, x, a, "figures/rectangular_room_graph.pdf", colorscheme=:Spectral)
 display(graph)
 
 
@@ -103,7 +103,9 @@ mess_fwd = get_mess_fwd(chmm, x, pseudocount_E=0.1)
 # In[10]:
 
 clone = 114
-imshow(place_field(mess_fwd, rc, clone))
+pf = place_field(mess_fwd, rc, clone)
+heatmap(pf', c=cgrad(:viridis), aspect_ratio=:equal,
+        title="Place Field - Clone $clone")
 savefig("figures/rectangular_room_place_field.pdf")
 
 
@@ -125,26 +127,26 @@ n_emissions = maximum(room) + 1
 a, x, rc = datagen_structured_obs_room(room, length=50000)
 
 n_clones = ones(Int64, n_emissions) .* 70
-chmm = CHMM(n_clones=n_clones, pseudocount=2e-3, x=x, a=a, seed=4)
-progression = chmm.learn_em_T(x, a, n_iter=1000)
+chmm = CHMM(n_clones, x, a; pseudocount=2e-3, seed=4)
+progression = learn_em_T(chmm, x, a; n_iter=1000)
 
 # In[12]:
 # Refine learning
 chmm.pseudocount = 0.0
-chmm.learn_viterbi_T(x, a, n_iter=100)
+progression2 = learn_viterbi_T(chmm, x, a, 100)
 
 # In[13]:
 
-cmap = colors.ListedColormap(custom_colors)
-heatmap(room, colormap=cmap)
+# Visualize empty room layout
+heatmap(room', c=cgrad(:Spectral), aspect_ratio=:equal,
+        title="Empty Rectangular Room Layout")
 savefig("figures/empty_rectangular_room_layout.pdf")
 
 
 # In[14]:
 
-graph = plot_graph(
-chmm, x, a, output_file="figures/empty_rectangular_room_graph.pdf", cmap=cmap, vertex_size=30
-)
+graph = plot_graph(chmm, x, a, "figures/empty_rectangular_room_graph.pdf",
+                   colorscheme=:Spectral, nodesize=0.3)
 display(graph)
 
 
@@ -155,7 +157,9 @@ mess_fwd = get_mess_fwd(chmm, x, pseudocount_E=0.1)
 # In[16]:
 
 clone = 58
-heatmap(place_field(mess_fwd, rc, clone))
+pf = place_field(mess_fwd, rc, clone)
+heatmap(pf', c=cgrad(:viridis), aspect_ratio=:equal,
+        title="Place Field - Clone $clone")
 savefig("figures/empty_rectangular_room_place_field.pdf")
 
 
@@ -166,8 +170,8 @@ room = randperm(25) |> reshape(_, 5)
 a, x, rc = datagen_structured_obs_room(room, length=10000)
 
 n_clones = ones(Int64, 25) .* 10
-chmm = CHMM(n_clones=n_clones, pseudocount=1e-2, x=x, a=a, seed=4) # Initialize the model
-progression = chmm.learn_em_T(x, a, n_iter=1000) # Training
+chmm = CHMM(n_clones, x, a; pseudocount=1e-2, seed=4) # Initialize the model
+progression = learn_em_T(chmm, x, a; n_iter=1000) # Training
 
 
 # In[18]:
@@ -175,17 +179,18 @@ progression = chmm.learn_em_T(x, a, n_iter=1000) # Training
 #refine learning
 
 chmm.pseudocount = 0.0
-chmm.learn_viterbi_T(x, a, n_iter=100)
+progression2 = learn_viterbi_T(chmm, x, a, 100)
 
 
 # In[19]:
 
-matshow(room, cmap="Reds")
+heatmap(room', c=cgrad(:Reds), aspect_ratio=:equal,
+        title="Square Room Layout")
 savefig("figures/square_room_layout.pdf")
 
 # In[20]:
 
-graph = plot_graph(chmm, x, a, output_file="figures/square_room_graph.pdf", cmap="Reds")
+graph = plot_graph(chmm, x, a, "figures/square_room_graph.pdf", colorscheme=:Reds)
 display(graph)
 
 # In[21]:
@@ -195,9 +200,10 @@ mess_fwd = get_mess_fwd(chmm, x, pseudocount_E=0.1)
 # In[22]:
 
 clone = 75
-matshow(place_field(mess_fwd, rc, clone))
-, x=x, a=a, seed=19) # Initialize the model
-progression = chmm.learn_em_T(x, a, n_iter=1000) # Trainingsavefig("figures/square_room_place_field.pdf")
+pf = place_field(mess_fwd, rc, clone)
+heatmap(pf', c=cgrad(:viridis), aspect_ratio=:equal,
+        title="Place Field - Clone $clone")
+savefig("figures/square_room_place_field.pdf")
 
 # In[23]:
 
@@ -243,8 +249,8 @@ a = vcat([4, a1[1:end-1], 4, 4, a2])
 n_emissions = maximum(x) + 1
 n_clones = 20 .* ones(Int, n_emissions)
 n_clones[1] = 1
-chmm = CHMM(n_clones=n_clones, pseudocount=2e-2
-progression = learn_em_T(chmm, x, a, n_iter=1000)  # Training
+chmm = CHMM(n_clones, x, a; pseudocount=2e-2, seed=19)
+progression = learn_em_T(chmm, x, a; n_iter=1000)  # Training
 
 
 # In[24]:

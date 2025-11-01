@@ -401,5 +401,7 @@ include("utils.jl")
 include("message_passing.jl")
 include("helpers.jl")
 
+# Export plotting and analysis functions from helpers
+export plot_graph, get_mess_fwd, place_field, nll, train_chmm
 
 end
