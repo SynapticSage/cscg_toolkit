@@ -45,3 +45,4 @@ figures/
 *.tmp
 *.bak
 .mind/
+test_data
