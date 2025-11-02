@@ -1,7 +1,7 @@
 name = "ClonalMarkov"
 uuid = "850f068f-74c8-48a6-993f-91700854c8e3"
 version = "1.0.0-DEV"
-authors = ["Ryan Young <ryoung@brandeis.edu> and contributors"]
+authors = ["Ryan Young <git@ryanyoung.io> and contributors"]
 
 [deps]
 Blink = "ad839575-38b3-5650-b840-f874b8c74a25"

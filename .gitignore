@@ -46,3 +46,6 @@ figures/
 *.bak
 .mind/
 test_data
+
+# Documentation (not ready for publication)
+docs/

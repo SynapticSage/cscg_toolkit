@@ -12,8 +12,6 @@
 
 This repository provides implementations of **Clonal Hidden Markov Models (CHMM)**, a probabilistic framework for learning structured cognitive maps from sequential observations and actions. CHMMs extend traditional HMMs by allowing multiple hidden states ("clones") per observation, enabling richer structure learning.
 
-**Research Paper**: [Learning cognitive maps as structured graphs for vicarious evaluation](https://www.biorxiv.org/content/10.1101/864421v4.full) (Young, 2020)
-
 ---
 
 ## Repository Structure
@@ -28,15 +26,10 @@ chmm_julia/
 │   ├── test/                    # Unit & integration tests
 │   ├── scripts/                 # Example scripts
 │   └── test_data/               # Test fixtures
-├── python/                      # Python reference implementation (legacy)
-│   ├── chmm_actions.py
-│   ├── intro.ipynb
-│   └── README.md
-└── docs/                        # Documentation
-    └── future/                  # Future development roadmaps
-        ├── gradient-descent.md
-        ├── flux-integration.md
-        └── performance-benchmarks.md
+└── python/                      # Python reference implementation (legacy)
+    ├── chmm_actions.py
+    ├── intro.ipynb
+    └── README.md
 ```
 
 ---
@@ -130,7 +123,7 @@ Hidden States: [s0,s1,s2] [s3,s4,s5] [s6,s7,s8] ...  (3 clones per cell)
 
 **Alternatives**:
 - **Viterbi training**: Hard assignment (argmax) instead of soft expectations
-- **Gradient descent** (future): See [`docs/future/gradient-descent.md`](docs/future/gradient-descent.md)
+- **Gradient descent** (future): Planned enhancement for integration with neural networks
 
 ---
 
@@ -246,15 +239,7 @@ We are planning to add **gradient descent training** via Flux.jl, enabling:
 - Mini-batch training
 - End-to-end differentiable pipelines
 
-**Status**: Research phase - see roadmaps in [`docs/future/`](docs/future/)
-
-| Document | Description |
-|----------|-------------|
-| [gradient-descent.md](docs/future/gradient-descent.md) | Feasibility analysis (9/10 feasible!) |
-| [flux-integration.md](docs/future/flux-integration.md) | Implementation roadmap |
-| [performance-benchmarks.md](docs/future/performance-benchmarks.md) | Benchmarking plan |
-
-**Estimated timeline**: 2-3 weeks for working prototype
+**Status**: Research phase
 
 ---
 
@@ -271,29 +256,12 @@ We are planning to add **gradient descent training** via Flux.jl, enabling:
 
 ---
 
-## Citation
-
-If you use this software in your research, please cite:
-
-```bibtex
-@article{young2020learning,
-  title={Learning cognitive maps as structured graphs for vicarious evaluation},
-  author={Young, Ryan},
-  journal={bioRxiv},
-  year={2020},
-  publisher={Cold Spring Harbor Laboratory},
-  url={https://www.biorxiv.org/content/10.1101/864421v4.full}
-}
-```
-
----
-
 ## Contributing
 
 This is a research project. Contributions are welcome!
 
 **Priority areas**:
-- [ ] Gradient descent training (see `docs/future/flux-integration.md`)
+- [ ] Gradient descent training via Flux.jl
 - [ ] GPU acceleration
 - [ ] Performance optimizations
 - [ ] Additional test coverage
@@ -311,24 +279,6 @@ This is a research project. Contributions are welcome!
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details
-
----
-
-## Contact
-
-**Author**: Ryan Young
-**Email**: ryoung@brandeis.edu
-**Institution**: Brandeis University
-
-**Issues**: https://github.com/YourUsername/chmm_julia/issues
-
----
-
-## Acknowledgments
-
-- Original Python implementation: Ryan Young (2019-2020)
-- Julia conversion: Ryan Young (2024-2025)
-- Research supported by: [Your funding sources]
 
 ---
 
