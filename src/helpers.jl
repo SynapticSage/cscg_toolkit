@@ -6,7 +6,7 @@ import Cairo  # Required for PDF output
 
 """
     plot_graph(chmm::CHMM, x::Vector{Int64}, a::Vector{Int64}, output_file::String;
-               colorscheme=:Spectral, multiple_episodes=false, nodesize=0.1)
+               colorscheme=:Spectral, multiple_episodes=false, nodesize=0.1, edge_threshold=0.05)
 
 Plot the learned graph structure from a CHMM model using native Julia plotting.
 
@@ -20,6 +20,8 @@ Plot the learned graph structure from a CHMM model using native Julia plotting.
 - `colorscheme`: ColorSchemes.jl colorscheme (default: :Spectral)
 - `multiple_episodes`: Whether to handle multiple episodes (default: false)
 - `nodesize`: Size of nodes in the graph (default: 0.1)
+- `edge_threshold`: Minimum transition probability to display an edge (default: 0.05).
+                    Only transitions ≥ this threshold are shown. Higher values = sparser graphs.
 
 # Returns
 - The plot object
@@ -27,13 +29,15 @@ Plot the learned graph structure from a CHMM model using native Julia plotting.
 # Example
 ```julia
 plot_graph(chmm, x, a, "figures/graph.pdf", colorscheme=:viridis)
+plot_graph(chmm, x, a, "figures/sparse.pdf", edge_threshold=0.1)  # Show only strong edges
 ```
 """
 function plot_graph(
     chmm::CHMM, x::Vector{Int64}, a::Vector{Int64}, output_file::String;
     colorscheme=:Spectral,
     multiple_episodes=false,
-    nodesize=0.1
+    nodesize=0.1,
+    edge_threshold=0.05
 )
     _, states = decode(chmm, x, a)
 
@@ -48,7 +52,9 @@ function plot_graph(
     A ./= sum(A, dims=2)
 
     # Create graph from adjacency matrix
-    adj_matrix = dropdims(A, dims=1) .> 0
+    # Filter edges: only show transitions with probability >= edge_threshold
+    # This removes weak/noise connections and makes the graph more interpretable
+    adj_matrix = dropdims(A, dims=1) .>= edge_threshold
     g = SimpleDiGraph(adj_matrix)
 
     # Node labels (observations)

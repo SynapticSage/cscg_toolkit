@@ -1,6 +1,7 @@
-using chmm_julia
+using ClonalMarkov
 using Test
 
-@testset "chmm_julia.jl" begin
+@testset "ClonalMarkov.jl" begin
     # Write your tests here.
+    @test true  # Placeholder test
 end

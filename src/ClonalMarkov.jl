@@ -215,9 +215,8 @@ function learn_viterbi_T(self::CHMM, x, a, n_iter=100)
     """Run Viterbi training, keeping E deterministic and fixed, learning T"""
     flush(stdout)
     convergence = []
-    pbar = tqdm(n_iter, position=0)
     log2_lik_old = -Inf
-    @showprogress "learn_viterbi" for _ in pbar
+    @showprogress "learn_viterbi" for it in 1:n_iter
         # E
         log2_lik, mess_fwd = forward_mp(
             permutedims(self.T, (1, 3, 2)),
@@ -241,7 +240,7 @@ function learn_viterbi_T(self::CHMM, x, a, n_iter=100)
         update_T(self)
 
         push!(convergence, -mean(log2_lik))
-        pbar.set_postfix(train_bps=convergence[end])
+        println("train_bps = $(convergence[end])")
         if mean(log2_lik) <= log2_lik_old
             break
         end
@@ -272,7 +271,7 @@ function learn_em_E(x, a; n_iter=100, pseudocount_extra=1e-20)
     E = update_E(model, CE .+ pseudocount_extra)
     convergence = Float64[]
     log2_lik_old = -Inf
-    for it in tqdm(1:n_iter, desc="EM E step")
+    @showprogress "EM E step" for it in 1:n_iter
         # E
         log2_lik, mess_fwd = forwardE(
             permutedims(model.T, (1, 3, 2)),
