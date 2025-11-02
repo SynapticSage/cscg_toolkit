@@ -1,6 +1,5 @@
-# Python implementation (reference only - not actively maintained)
-python/*
-!python/README.md
+# Python implementation (Dileep George's original code - not included for copyright/attribution)
+python/
 
 # Python artifacts
 *.pyc
@@ -49,3 +48,7 @@ test_data
 
 # Documentation (not ready for publication)
 docs/
+
+# Reference papers (may be copyrighted)
+papers/pdf/
+papers/md/
