@@ -192,3 +192,110 @@ function train_chmm(obs::Vector{Int}, n_clones::Vector{Int}, n_iter::Int)
 
     return chmm
 end
+
+"""
+    create_gridworld_heatmap(room::Matrix, title::String; size=(900, 700))
+
+Create a heatmap visualization of the gridworld layout.
+
+# Arguments
+- `room`: Matrix representing the gridworld (observations per cell)
+- `title`: Plot title
+- `size`: Figure size tuple (default: 900x700)
+
+# Returns
+- Heatmap plot object
+
+# Example
+```julia
+room = [1 2; 0 1]
+p = create_gridworld_heatmap(room, "My Gridworld")
+```
+"""
+function create_gridworld_heatmap(room::Matrix, title::String; size=(900, 700))
+    heatmap(
+        room',  # Transpose for correct orientation
+        c=cgrad(:Spectral),
+        aspect_ratio=:equal,
+        title=title,
+        xlabel="X", ylabel="Y",
+        colorbar_title="Observation",
+        size=size
+    )
+end
+
+"""
+    map_states_to_grid(states::Vector{Int}, rc::Matrix{Int}, room_size::Tuple{Int,Int})
+
+Map state sequence to spatial grid positions.
+
+# Arguments
+- `states`: Vector of state indices from decode()
+- `rc`: Row-column trajectory coordinates [T x 2]
+- `room_size`: Tuple of (height, width) for the room
+
+# Returns
+- Matrix of vectors containing unique sorted state indices per cell
+
+# Example
+```julia
+_, states = decode(chmm, x, a)
+grid_states = map_states_to_grid(states, rc, size(room))
+# grid_states[i,j] contains all unique states that visited cell (i,j)
+```
+"""
+function map_states_to_grid(states::Vector{Int}, rc::Matrix{Int}, room_size::Tuple{Int,Int})
+    # Validate inputs
+    @assert length(states) == size(rc, 1) "State sequence length must match trajectory length"
+    @assert size(rc, 2) == 2 "Trajectory must be [T x 2] matrix (row, col)"
+
+    # Create grid to store states per cell
+    grid_states = [Int[] for _ in 1:room_size[1], _ in 1:room_size[2]]
+
+    # Map states to spatial positions
+    for t in 1:length(states)
+        r, c = rc[t, :]
+
+        # Validate coordinates are in bounds
+        @assert 1 ≤ r ≤ room_size[1] && 1 ≤ c ≤ room_size[2] "Trajectory contains out-of-bounds coordinates at t=$t: ($r, $c)"
+
+        push!(grid_states[r, c], states[t])
+    end
+
+    # Return unique sorted states per cell
+    return [sort(unique(cell)) for cell in grid_states]
+end
+
+"""
+    obs_value_to_state_range(obs_value::Int, n_clones::Vector{Int})
+
+Convert observation value to its corresponding state index range.
+
+# Arguments
+- `obs_value`: Observation identifier (0-indexed semantically)
+- `n_clones`: Vector of clone counts per observation
+
+# Returns
+- Tuple (first_state, last_state) or nothing if obs_value == 0
+
+# Example
+```julia
+obs_value_to_state_range(1, [30, 30, 30, 30])  # Returns (31, 60)
+obs_value_to_state_range(0, [30, 30, 30, 30])  # Returns nothing
+```
+"""
+function obs_value_to_state_range(obs_value::Int, n_clones::Vector{Int})
+    # Skip inaccessible cells (observation 0)
+    if obs_value == 0
+        return nothing
+    end
+
+    # Calculate state boundaries
+    state_loc = cumsum([0; n_clones])
+    obs_idx = obs_value + 1  # Convert to 1-indexed
+
+    first_state = state_loc[obs_idx] + 1
+    last_state = state_loc[obs_idx + 1]
+
+    return (first_state, last_state)
+end

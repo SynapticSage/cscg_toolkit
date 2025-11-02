@@ -7,6 +7,20 @@ using ClonalMarkov
 using LinearAlgebra, Random
 using Plots, ColorSchemes
 
+# =============================================================================
+# Configuration
+# =============================================================================
+const CONFIG = (
+    clones_per_obs = 30,          # Balances model expressiveness vs. speed
+    trajectory_length = 10000,     # Sufficient for learning convergence
+    em_iterations = 50,            # Typically converges in 30-40 iterations
+    pseudocount = 2e-3,           # Regularization for EM (prevents overfitting)
+    fig_size_large = (900, 700),  # For labeled gridworlds
+    fig_size_standard = (600, 400), # For standard plots
+    font_size_ranges = 5,         # Readable state ranges
+    font_size_states = 4,         # Fits multiple state numbers
+)
+
 # Ensure figures directory exists
 !isdir("figures") && mkdir("figures")
 
@@ -30,14 +44,14 @@ println("  Number of distinct observations: $n_emissions")
 
 # Generate trajectory data
 println("\n2. Generating navigation data...")
-a, x, rc = ClonalMarkov.datagen_structured_obs_room(room; length=10000)
+a, x, rc = ClonalMarkov.datagen_structured_obs_room(room; length=CONFIG.trajectory_length)
 println("  Trajectory length: $(length(x))")
 
 # Visualize the room layout using Plots.jl
 println("\n3. Visualizing room layout with state assignments...")
 
 # First, set up the clone structure (needed for state index calculation)
-n_clones = fill(30, n_emissions)  # 30 clones per observation
+n_clones = fill(CONFIG.clones_per_obs, n_emissions)
 
 # PRE-TRAINING VISUALIZATION: Show all possible state indices per cell
 # State indices are absolute positions in the full state space
@@ -45,14 +59,10 @@ n_clones = fill(30, n_emissions)  # 30 clones per observation
 # This shows the initial state space structure before any learning
 state_loc = cumsum([0; n_clones])  # Boundaries: [0, 30, 60, 90, 120]
 
-p1 = heatmap(
-    room',  # Transpose for correct orientation
-    c=cgrad(:Spectral),
-    aspect_ratio=:equal,
-    title="Gridworld Layout (Pre-Training State Ranges)",
-    xlabel="X", ylabel="Y",
-    colorbar_title="Observation",
-    size=(900, 700)  # Larger figure to accommodate text labels
+p1 = create_gridworld_heatmap(
+    room,
+    "Gridworld Layout (Pre-Training State Ranges)",
+    size=CONFIG.fig_size_large
 )
 
 # Add text labels showing state index ranges on each cell
@@ -73,7 +83,7 @@ for i in 1:size(room, 1)
         first_state = state_loc[obs_idx] + 1
         last_state = state_loc[obs_idx + 1]
         range_str = "$first_state-$last_state"
-        annotate!(p1, j, i, text(range_str, :white, :center, 5))
+        annotate!(p1, j, i, text(range_str, :white, :center, CONFIG.font_size_ranges))
     end
 end
 savefig(p1, "figures/simple_room_layout.png")
@@ -81,11 +91,11 @@ println("  Saved: figures/simple_room_layout.png (showing all possible states)")
 
 # Initialize and train CHMM
 println("\n4. Training CHMM...")
-chmm = CHMM(n_clones, x, a; pseudocount=2e-3, seed=42)
+chmm = CHMM(n_clones, x, a; pseudocount=CONFIG.pseudocount, seed=42)
 println("  Initial model created with $(sum(n_clones)) total states")
 
-println("  Running EM training (50 iterations)...")
-progression = learn_em_T(chmm, x, a; n_iter=50, term_early=false)
+println("  Running EM training ($(CONFIG.em_iterations) iterations)...")
+progression = learn_em_T(chmm, x, a; n_iter=CONFIG.em_iterations, term_early=false)
 println("  Training complete!")
 
 # Plot learning curve
@@ -97,7 +107,7 @@ p2 = plot(
     title="CHMM Learning Curve",
     legend=false,
     linewidth=2,
-    size=(600, 400)
+    size=CONFIG.fig_size_standard
 )
 savefig(p2, "figures/simple_learning_curve.png")
 println("  Saved: figures/simple_learning_curve.png")
@@ -111,27 +121,14 @@ _, states = decode(chmm, x, a)
 v = unique(states)  # v contains the visited state indices (same as graph node labels)
 
 # Map visited states back to spatial positions using the trajectory data
-# Create a grid to store which states visit each cell
-grid_states = [Int[] for _ in 1:size(room, 1), _ in 1:size(room, 2)]
-for t in 1:length(states)
-    r, c = rc[t, :]  # Get spatial position at time t
-    push!(grid_states[r, c], states[t])  # Record which state was there
-end
-
-# Get unique states per cell (sorted for readability)
-for i in 1:size(room, 1), j in 1:size(room, 2)
-    grid_states[i, j] = sort(unique(grid_states[i, j]))
-end
+# This helper function creates a grid showing which states visited each cell
+grid_states = map_states_to_grid(states, rc, size(room))
 
 # Create heatmap showing visited states
-p_visited = heatmap(
-    room',  # Transpose for correct orientation
-    c=cgrad(:Spectral),
-    aspect_ratio=:equal,
-    title="Gridworld Layout (Post-Training Visited States)",
-    xlabel="X", ylabel="Y",
-    colorbar_title="Observation",
-    size=(900, 700)  # Larger figure to accommodate text labels
+p_visited = create_gridworld_heatmap(
+    room,
+    "Gridworld Layout (Post-Training Visited States)",
+    size=CONFIG.fig_size_large
 )
 
 # Add text labels showing which state indices actually visited each cell
@@ -145,7 +142,7 @@ for i in 1:size(room, 1)
         if !isempty(visited)
             # Format: show all visited states, separated by commas
             label_str = join(visited, ",")
-            annotate!(p_visited, j, i, text(label_str, :white, :center, 4))
+            annotate!(p_visited, j, i, text(label_str, :white, :center, CONFIG.font_size_states))
         end
     end
 end

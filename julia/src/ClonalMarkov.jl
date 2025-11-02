@@ -402,5 +402,6 @@ include("helpers.jl")
 
 # Export plotting and analysis functions from helpers
 export plot_graph, get_mess_fwd, place_field, nll, train_chmm
+export create_gridworld_heatmap, map_states_to_grid, obs_value_to_state_range
 
 end
