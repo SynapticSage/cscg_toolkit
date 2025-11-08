@@ -11,11 +11,16 @@ version = "0.1.0"
 description = "Clone-Structured Cognitive Graphs (CSCG) implemented in JAX with PyTorch bridge"
 readme = "README.md"
 requires-python = ">=3.9"
-license = {text = "MIT"}
-authors = [
-    {name = "Ryan Young"}
+license = { text = "MIT" }
+authors = [{ name = "Ryan Young" }]
+keywords = [
+    "hidden markov models",
+    "chmm",
+    "cscg",
+    "cognitive graphs",
+    "jax",
+    "neuroscience",
 ]
-keywords = ["hidden markov models", "chmm", "cscg", "cognitive graphs", "jax", "neuroscience"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -36,16 +41,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "matplotlib>=3.7.0",
-]
+dev = ["pytest>=7.4.0", "pytest-cov>=4.1.0", "matplotlib>=3.7.0"]
 
 [project.urls]
-Homepage = "https://github.com/YourUsername/chmm_julia"
-Documentation = "https://github.com/YourUsername/chmm_julia/tree/main/jax"
-Repository = "https://github.com/YourUsername/chmm_julia"
+Homepage = "https://github.com/synapticsage/cscg_toolkit"
+Documentation = "https://github.com/synapticsage/cscg_toolkit/tree/main/jax"
+Repository = "https://github.com/synapticsage/cscg_toolkit"
 
 [tool.setuptools.packages.find]
 where = ["."]

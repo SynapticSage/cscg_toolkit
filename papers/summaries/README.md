@@ -32,7 +32,10 @@
 - **Mathematical framework**: $P(x_1,\ldots,x_N) = \sum_{z_1 \in C(x_1)} \cdots P(z_1) \prod P(z_{n+1}|z_n)$
   ◦ Baum-Welch adapted: $\alpha(n+1)^T = \alpha(n)^T T(x_n, x_{n+1})$
   ◦ Online EM: $A_{ij}^{(b)} = \lambda A_{ij}^{(b-1)} + (1-\lambda)\sum \xi_{ij}(n)$
-- **Theoretical guarantee**: $$\|\hat{T}^j - T^*\|_2 \leq \gamma^j \|\hat{T}^0 - T^*\|_2 + \frac{r(N,k,\delta)}{1-\gamma}$$
+- **Theoretical guarantee**:
+$$
+\|\hat{T}^j - T^*\|_2 \leq \gamma^j \|\hat{T}^0 - T^*\|_2 + \frac{r(N,k,\delta)}{1-\gamma}
+$$
 - **Key results**: Beats LSTMs on FSM tasks, character prediction
   ◦ Computational savings: $O(M^2 N)$ vs $O(H^2 N)$ for HMM
 - **Impact**: First formalization of cloning in probabilistic framework

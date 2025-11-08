@@ -1,4 +1,5 @@
-# CSCG: Clone-Structured Cognitive Graphs
+<img src="./assets/logo.png" width=40%>
+<!--# Clone-Structured Cognitive Graph Toolkit-->
 
 **Action-augmented cloned HMMs for higher-order sequence learning and cognitive map formation**
 
@@ -12,22 +13,27 @@
 
 This repository implements **Clone-Structured Cognitive Graphs (CSCG)**, a probabilistic framework for learning cognitive maps from sequential observations and actions. CSCGs build on **Cloned Hidden Markov Models (CHMM)**, which are sparse HMMs where each hidden state emits a single observation deterministically, with multiple "clones" per observation enabling context-dependent representations based on sequential context. CSCGs extend cloned HMMs by augmenting transitions with actions, enabling spatial/temporal/relational learning and vicarious evaluation (planning without execution) through message-passing inference.
 
-**Key insight**: Cognitive maps emerge naturally from latent higher-order sequence learning—organisms learn space by treating it as a sequence, not by assuming Euclidean coordinates.
+Cognitive maps emerge naturally from latent higher-order sequence learning—organisms learn space by treating it as a sequence.
 
 ---
 
 ## Repository Structure
 
 ```
-chmm_julia/
+cscg_toolkit/
 ├── README.md                    # This file
 ├── LICENSE                      # MIT License
-├── julia/                       # Julia implementation (active development)
+├── julia/                       # Julia implementation (reference)
 │   ├── Project.toml
 │   ├── src/                     # Core CSCG library
 │   ├── test/                    # Unit & integration tests
 │   ├── scripts/                 # Example scripts
 │   └── test_data/               # Test fixtures
+├── jax/                         # JAX implementation (active development)
+│   ├── chmm_jax/                # Core package
+│   ├── tests/                   # Test suite
+│   ├── examples/                # Usage examples
+│   └── README.md                # JAX-specific docs
 ├── papers/                      # Reference papers and summaries
 │   ├── pdf/                     # Original papers (PDFs)
 │   ├── md/                      # Markdown conversions
@@ -96,8 +102,8 @@ The Baum-Welch algorithm takes a simpler form for cloned HMMs due to emission sp
 **Prerequisites**: Julia 1.9+
 
 ```bash
-git clone https://github.com/YourUsername/chmm_julia.git
-cd chmm_julia/julia
+git clone https://github.com/YourUsername/cscg_toolkit.git
+cd cscg_toolkit/julia
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
@@ -188,20 +194,6 @@ julia --project=. test/test_equivalence.jl
 - ✅ EM M-step (update_T)
 
 Test data fixtures: `julia/test_data/` (small, medium, large cases)
-
----
-
-## Future Development
-
-### Gradient-Based Training (Planned)
-
-We are planning to add **gradient descent training** via Flux.jl, enabling:
-- Integration with neural networks
-- GPU acceleration
-- Mini-batch training
-- End-to-end differentiable pipelines
-
-**Status**: Research phase
 
 ---
 

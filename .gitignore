@@ -53,3 +53,5 @@ docs/
 papers/pdf/
 papers/md/
 jax/chmm_jax.egg-info
+
+!assets/logo.png

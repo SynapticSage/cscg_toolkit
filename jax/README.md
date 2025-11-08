@@ -1,4 +1,4 @@
-# JAX CHMM: Clone-Structured Cognitive Graphs in JAX
+# JAX CHMM: Clone-Structured Cognitive Graph Toolkit (JAX Implementation)
 
 **Efficient implementation of CHMMs/CSCGs using JAX with `lax.scan` for sequential message passing**
 
@@ -303,7 +303,7 @@ For comprehensive technical summaries with LaTeX math:
 
 ## Contributing
 
-This is part of the CHMM research project. See [`../README.md`](../README.md) for overall project structure.
+This is part of the Clone-Structured Cognitive Graph Toolkit. See [`../README.md`](../README.md) for overall project structure.
 
 **Development workflow**:
 1. Port algorithm from Julia (`../julia/src/ClonalMarkov.jl`)
