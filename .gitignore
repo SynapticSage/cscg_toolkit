@@ -52,3 +52,4 @@ docs/
 # Reference papers (may be copyrighted)
 papers/pdf/
 papers/md/
+jax/chmm_jax.egg-info

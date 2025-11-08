@@ -1,0 +1,23 @@
+# JAX CHMM Dependencies
+# Created: 2025-11-03
+# Modified: 2025-11-03
+
+# Core JAX
+jax>=0.4.20
+jaxlib>=0.4.20
+
+# PyTorch bridge
+torch>=2.0.0
+
+# Optimization
+optax>=0.1.7
+
+# Utilities
+numpy>=1.24.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Optional: visualization
+matplotlib>=3.7.0
