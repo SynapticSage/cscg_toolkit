@@ -263,21 +263,8 @@ def _update_C(
         xi = alpha_t[:, None] * T_block * beta_t[None, :]
         xi = xi / jnp.sum(xi)  # Normalize
 
-        # Accumulate into count matrix
-        # Extract current block, add xi, then update
-        current_block = jax.lax.dynamic_slice(
-            C_new[a_t],
-            (i_start, j_start),
-            (i_stop - i_start, j_stop - j_start)
-        )
-        updated_block = current_block + xi
-        C_new_a = jax.lax.dynamic_update_slice(
-            C_new[a_t],
-            updated_block,
-            (i_start, j_start)
-        )
-        # Update the action slice
-        C_new = C_new.at[a_t].set(C_new_a)
+        # Accumulate into count matrix using .at indexing
+        C_new = C_new.at[a_t, i_start:i_stop, j_start:j_stop].add(xi)
 
     return C_new
 
