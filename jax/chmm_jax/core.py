@@ -239,27 +239,45 @@ def _update_C(
     # Iterate over timesteps (not using lax.scan here due to varying block sizes)
     # TODO: Optimize with lax.scan or vmap
     for t in range(1, len(observations)):
-        a_t = actions[t - 1]
-        i, j = observations[t - 1], observations[t]
+        # Convert to Python ints to avoid JAX tracing issues with indexing
+        a_t = int(actions[t - 1])
+        i, j = int(observations[t - 1]), int(observations[t])
 
         # Get block indices
-        i_start, i_stop = state_loc[i], state_loc[i + 1]
-        j_start, j_stop = state_loc[j], state_loc[j + 1]
-        tm1_start, tm1_stop = mess_loc[t - 1], mess_loc[t]
-        t_start, t_stop = mess_loc[t], mess_loc[t + 1]
+        i_start, i_stop = int(state_loc[i]), int(state_loc[i + 1])
+        j_start, j_stop = int(state_loc[j]), int(state_loc[j + 1])
+        tm1_start, tm1_stop = int(mess_loc[t - 1]), int(mess_loc[t])
+        t_start, t_stop = int(mess_loc[t]), int(mess_loc[t + 1])
 
-        # Extract messages for this timestep
-        alpha_t = alpha[tm1_start:tm1_stop]
-        beta_t = beta[t_start:t_stop]
+        # Extract messages for this timestep using dynamic_slice
+        alpha_t = jax.lax.dynamic_slice(alpha, (tm1_start,), (tm1_stop - tm1_start,))
+        beta_t = jax.lax.dynamic_slice(beta, (t_start,), (t_stop - t_start,))
 
         # Compute expected counts for this transition block
         # xi[i, j] = alpha[t-1, i] * T[a, i, j] * beta[t, j]
-        T_block = T[a_t, i_start:i_stop, j_start:j_stop]
+        T_block = jax.lax.dynamic_slice(
+            T[a_t],
+            (i_start, j_start),
+            (i_stop - i_start, j_stop - j_start)
+        )
         xi = alpha_t[:, None] * T_block * beta_t[None, :]
         xi = xi / jnp.sum(xi)  # Normalize
 
         # Accumulate into count matrix
-        C_new = C_new.at[a_t, i_start:i_stop, j_start:j_stop].add(xi)
+        # Extract current block, add xi, then update
+        current_block = jax.lax.dynamic_slice(
+            C_new[a_t],
+            (i_start, j_start),
+            (i_stop - i_start, j_stop - j_start)
+        )
+        updated_block = current_block + xi
+        C_new_a = jax.lax.dynamic_update_slice(
+            C_new[a_t],
+            updated_block,
+            (i_start, j_start)
+        )
+        # Update the action slice
+        C_new = C_new.at[a_t].set(C_new_a)
 
     return C_new
 

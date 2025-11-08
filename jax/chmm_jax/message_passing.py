@@ -43,9 +43,10 @@ def forward(
     mess_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones[observations])])
 
     # Initialize first message
-    j = observations[0]
-    j_start, j_stop = state_loc[j], state_loc[j + 1]
-    message_0 = Pi_x[j_start:j_stop]
+    # Convert to Python int to avoid JAX tracing issues with indexing
+    j = int(observations[0])
+    j_start, j_stop = int(state_loc[j]), int(state_loc[j + 1])
+    message_0 = lax.dynamic_slice(Pi_x, (j_start,), (j_stop - j_start,))
     p_obs_0 = jnp.sum(message_0)
     message_0 = message_0 / p_obs_0
     log_lik_0 = jnp.log(p_obs_0)
@@ -74,13 +75,18 @@ def forward(
         """
         t, a_t, i, j = inputs
 
-        # Get block indices
-        i_start, i_stop = state_loc[i], state_loc[i + 1]
-        j_start, j_stop = state_loc[j], state_loc[j + 1]
+        # Convert to Python ints to avoid JAX tracing issues
+        i_int, j_int, a_int = int(i), int(j), int(a_t)
+        i_start, i_stop = int(state_loc[i_int]), int(state_loc[i_int + 1])
+        j_start, j_stop = int(state_loc[j_int]), int(state_loc[j_int + 1])
 
         # Transition: message = T[a, :, :].T @ message_prev
-        # Note: T[a, i, j] = P(j|i, a), so we need T[a, j, i] for backward direction
-        T_block = T[a_t, j_start:j_stop, i_start:i_stop]
+        # Use dynamic_slice for T block extraction
+        T_block = lax.dynamic_slice(
+            T[a_int],
+            (j_start, i_start),
+            (j_stop - j_start, i_stop - i_start)
+        )
         message_curr = T_block @ message_prev
 
         # Normalize
@@ -134,8 +140,9 @@ def backward(
     mess_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones[observations])])
 
     # Initialize last message
-    i = observations[-1]
-    i_start, i_stop = state_loc[i], state_loc[i + 1]
+    # Convert to Python int to avoid JAX tracing issues
+    i = int(observations[-1])
+    i_start, i_stop = int(state_loc[i]), int(state_loc[i + 1])
     n_clones_i = i_stop - i_start
     message_T = jnp.ones(n_clones_i) / n_clones_i
 
@@ -160,12 +167,18 @@ def backward(
         """
         t, a_t, i, j = inputs
 
-        # Get block indices
-        i_start, i_stop = state_loc[i], state_loc[i + 1]
-        j_start, j_stop = state_loc[j], state_loc[j + 1]
+        # Convert to Python ints to avoid JAX tracing issues
+        i_int, j_int, a_int = int(i), int(j), int(a_t)
+        i_start, i_stop = int(state_loc[i_int]), int(state_loc[i_int + 1])
+        j_start, j_stop = int(state_loc[j_int]), int(state_loc[j_int + 1])
 
         # Transition: message = T[a, i, j] @ message_next
-        T_block = T[a_t, i_start:i_stop, j_start:j_stop]
+        # Use dynamic_slice for T block extraction
+        T_block = lax.dynamic_slice(
+            T[a_int],
+            (i_start, j_start),
+            (i_stop - i_start, j_stop - j_start)
+        )
         message_curr = T_block @ message_next
 
         # Normalize
