@@ -236,6 +236,10 @@ def _update_C(
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
     mess_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones[observations])])
 
+    # Compute global normalization constant (same for all xi)
+    gamma = alpha * beta
+    norm_constant = jnp.sum(gamma)
+
     # Iterate over timesteps (not using lax.scan here due to varying block sizes)
     # TODO: Optimize with lax.scan or vmap
     for t in range(1, len(observations)):
@@ -254,17 +258,20 @@ def _update_C(
         beta_t = jax.lax.dynamic_slice(beta, (t_start,), (t_stop - t_start,))
 
         # Compute expected counts for this transition block
-        # xi[i, j] = alpha[t-1, i] * T[a, i, j] * beta[t, j]
+        # T[a, j, i] = P(j|i, a), so we need T[a_t, j_start:j_stop, i_start:i_stop]
+        # xi[i, j] = alpha[t-1, i] * T[a, i, j]^T * beta[t, j]
         T_block = jax.lax.dynamic_slice(
             T[a_t],
-            (i_start, j_start),
-            (i_stop - i_start, j_stop - j_start)
+            (j_start, i_start),  # Fixed: T is indexed as [to, from]
+            (j_stop - j_start, i_stop - i_start)
         )
-        xi = alpha_t[:, None] * T_block * beta_t[None, :]
-        xi = xi / jnp.sum(xi)  # Normalize
+        # Transpose T_block to get [from, to] ordering for xi computation
+        xi = alpha_t[:, None] * T_block.T * beta_t[None, :]
+        xi = xi / jnp.sum(xi)  # Normalize to sum to 1 (matches Julia)
 
         # Accumulate into count matrix using .at indexing
-        C_new = C_new.at[a_t, i_start:i_stop, j_start:j_stop].add(xi)
+        # Note: C is also indexed as [action, to, from] like T
+        C_new = C_new.at[a_t, j_start:j_stop, i_start:i_stop].add(xi.T)
 
     return C_new
 
