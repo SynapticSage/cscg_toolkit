@@ -55,3 +55,6 @@ papers/md/
 jax/chmm_jax.egg-info
 
 !assets/logo.png
+intro.py
+assets/logo.html
+research/experiments/mnist/data/MNIST/raw
