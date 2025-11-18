@@ -2,13 +2,14 @@
 Core CHMM data structures and learning algorithms.
 
 Created: 2025-11-03
-Modified: 2025-11-03
+Modified: 2025-11-17
 """
 
 from typing import NamedTuple, Tuple
 import jax
 import jax.numpy as jnp
 from jax import random
+from jax.scipy.special import logsumexp
 
 from .message_passing import forward, backward
 from .utils import validate_sequence
@@ -114,7 +115,12 @@ def forward_backward(
     observations: jax.Array,
     actions: jax.Array
 ) -> Tuple[float, jax.Array]:
-    """Compute log-likelihood and posteriors via forward-backward.
+    """Compute log-likelihood and posteriors via forward-backward with log-space arithmetic.
+
+    Uses log-space arithmetic for numerical stability and speed:
+    - Forward and backward return log messages
+    - Posteriors computed using logsumexp for stability
+    - Returned posteriors are in probability space for backward compatibility
 
     Args:
         chmm: CHMM model
@@ -123,12 +129,12 @@ def forward_backward(
 
     Returns:
         log_likelihood: Log P(observations, actions)
-        posteriors: Posterior probabilities [T, varies] (ragged array compressed)
+        posteriors: Posterior probabilities [T, varies] (ragged array compressed, probability space)
     """
     validate_sequence(observations, actions, chmm.n_clones)
 
-    # Forward pass
-    log_lik_fwd, alpha = forward(
+    # Forward pass (returns log messages)
+    log_lik_fwd, log_alpha = forward(
         chmm.T,
         chmm.Pi_x,
         chmm.n_clones,
@@ -137,18 +143,22 @@ def forward_backward(
         store_messages=True
     )
 
-    # Backward pass
-    beta = backward(
+    # Backward pass (returns log messages)
+    log_beta = backward(
         chmm.T,
         chmm.n_clones,
         observations,
         actions
     )
 
-    # Compute posteriors: gamma[t] = alpha[t] * beta[t] / sum(alpha[t] * beta[t])
-    gamma = alpha * beta
-    norm = jnp.sum(gamma)
-    gamma = gamma / norm
+    # Compute posteriors in log-space: log_gamma[t] = log_alpha[t] + log_beta[t]
+    # Then normalize: log_gamma -= logsumexp(log_gamma)
+    log_gamma = log_alpha + log_beta
+    log_norm = logsumexp(log_gamma)
+    log_gamma = log_gamma - log_norm
+
+    # Convert back to probability space for backward compatibility
+    gamma = jnp.exp(log_gamma)
 
     # Log-likelihood is sum of forward log-likelihoods
     log_likelihood = jnp.sum(log_lik_fwd)
@@ -171,8 +181,8 @@ def _em_step(
     Returns:
         Updated CHMM
     """
-    # E-step: Forward-backward to get expected counts
-    _, alpha = forward(
+    # E-step: Forward-backward to get expected counts (returns log messages)
+    _, log_alpha = forward(
         chmm.T,
         chmm.Pi_x,
         chmm.n_clones,
@@ -181,12 +191,16 @@ def _em_step(
         store_messages=True
     )
 
-    beta = backward(
+    log_beta = backward(
         chmm.T,
         chmm.n_clones,
         observations,
         actions
     )
+
+    # Convert log messages back to probability space for _update_C
+    alpha = jnp.exp(log_alpha)
+    beta = jnp.exp(log_beta)
 
     # Update counts using block-structured approach
     C_new = _update_C(

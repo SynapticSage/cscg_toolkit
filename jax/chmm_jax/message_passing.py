@@ -3,7 +3,7 @@ Message passing algorithms using lax.scan for efficiency.
 
 Forward and backward algorithms for CHMMs with block-structured sparse transitions.
 Created: 2025-11-03
-Modified: 2025-11-03
+Modified: 2025-11-17
 """
 
 from typing import Tuple, Optional
@@ -11,6 +11,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import lax
+from jax.scipy.special import logsumexp
 
 from .utils import log_normalize
 
@@ -23,13 +24,18 @@ def forward(
     actions: jax.Array,
     store_messages: bool = False
 ) -> Tuple[jax.Array, Optional[jax.Array]]:
-    """Forward algorithm using lax.scan.
+    """Forward algorithm using lax.scan with log-space arithmetic.
 
-    Computes alpha[t] = P(x_1:t, a_1:t-1, z_t) for each timestep.
+    Computes log alpha[t] = log P(x_1:t, a_1:t-1, z_t) for each timestep.
+
+    Uses log-space arithmetic throughout for numerical stability and speed:
+    - Avoids underflow on long sequences
+    - Eliminates expensive normalization divisions
+    - Uses logsumexp for stable log(sum(exp(x))) computation
 
     Args:
-        T: Transition matrix [n_actions, n_states, n_states]
-        Pi_x: Initial state distribution [n_states]
+        T: Transition matrix [n_actions, n_states, n_states] (probability space)
+        Pi_x: Initial state distribution [n_states] (probability space)
         n_clones: Clones per observation [n_obs]
         observations: Observation sequence [T]
         actions: Action sequence [T-1]
@@ -37,24 +43,29 @@ def forward(
 
     Returns:
         log_likelihoods: Log P(x_t | x_1:t-1, a_1:t-1) for each t [T]
-        alpha: Forward messages if store_messages=True, else None [varies]
+        alpha: Log forward messages if store_messages=True, else None [varies]
     """
+    # Convert to log-space once at start
+    log_T = jnp.log(T + 1e-45)  # Add epsilon to avoid log(0)
+    log_Pi_x = jnp.log(Pi_x + 1e-45)
+
     # Compute indices for clone locations
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
     mess_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones[observations])])
 
-    # Initialize first message
+    # Initialize first message in log-space
     # Convert to Python int to avoid JAX tracing issues with indexing
     j = int(observations[0])
     j_start, j_stop = int(state_loc[j]), int(state_loc[j + 1])
-    message_0 = lax.dynamic_slice(Pi_x, (j_start,), (j_stop - j_start,))
-    p_obs_0 = jnp.sum(message_0)
-    message_0 = message_0 / p_obs_0
-    log_lik_0 = jnp.log(p_obs_0)
+    log_message_0 = lax.dynamic_slice(log_Pi_x, (j_start,), (j_stop - j_start,))
+
+    # Compute log normalization constant using logsumexp
+    log_lik_0 = logsumexp(log_message_0)
+    log_message_0 = log_message_0 - log_lik_0  # Normalize in log-space
 
     if len(observations) == 1:
         if store_messages:
-            return jnp.array([log_lik_0]), message_0
+            return jnp.array([log_lik_0]), log_message_0
         else:
             return jnp.array([log_lik_0]), None
 
@@ -94,23 +105,23 @@ def forward(
     block_j_starts = jnp.array(block_j_starts, dtype=jnp.int32)
     block_j_sizes = jnp.array(block_j_sizes, dtype=jnp.int32)
 
-    # Define scan step function
-    def scan_step(message_prev, inputs):
-        """Single forward step.
+    # Define scan step function in log-space
+    def scan_step(log_message_prev, inputs):
+        """Single forward step in log-space.
 
         Args:
-            message_prev: Previous message [max_block_size] (padded)
+            log_message_prev: Previous log message [max_block_size] (padded)
             inputs: (a, i_start, i_size, j_start, j_size)
 
         Returns:
-            message_curr: Current message [max_block_size] (padded)
-            (log_lik, message_curr): Outputs to collect
+            log_message_curr: Current log message [max_block_size] (padded)
+            (log_lik, log_message_curr): Outputs to collect
         """
         a, i_start, i_size, j_start, j_size = inputs
 
-        # Extract T block with static size (max_block_size x max_block_size)
-        T_block = lax.dynamic_slice(
-            T[a],
+        # Extract log T block with static size (max_block_size x max_block_size)
+        log_T_block = lax.dynamic_slice(
+            log_T[a],
             (j_start, i_start),
             (max_block_size, max_block_size)
         )
@@ -119,43 +130,52 @@ def forward(
         i_mask = jnp.arange(max_block_size) < i_size
         j_mask = jnp.arange(max_block_size) < j_size
 
-        # Mask message_prev and T_block
-        message_prev_masked = jnp.where(i_mask, message_prev, 0.0)
+        # Mask log_message_prev and log_T_block (use -inf for invalid entries)
+        log_message_prev_masked = jnp.where(i_mask, log_message_prev, -jnp.inf)
         T_mask = j_mask[:, None] & i_mask[None, :]
-        T_block_masked = jnp.where(T_mask, T_block, 0.0)
+        log_T_block_masked = jnp.where(T_mask, log_T_block, -jnp.inf)
 
-        # Compute transition
-        message_curr = T_block_masked @ message_prev_masked
+        # Compute transition in log-space: log(T @ exp(log_alpha))
+        # = logsumexp(log_T + log_alpha, axis=1)
+        log_message_curr = logsumexp(
+            log_T_block_masked + log_message_prev_masked[None, :],
+            axis=1
+        )
 
-        # Normalize (only over valid entries)
-        p_obs = jnp.sum(jnp.where(j_mask, message_curr, 0.0))
-        message_curr = jnp.where(j_mask, message_curr / p_obs, 0.0)
-        log_lik = jnp.log(p_obs)
+        # Normalize using logsumexp (only over valid entries)
+        # Mask invalid entries before logsumexp
+        log_message_curr_masked = jnp.where(j_mask, log_message_curr, -jnp.inf)
+        log_lik = logsumexp(log_message_curr_masked)
+        log_message_curr = jnp.where(j_mask, log_message_curr - log_lik, -jnp.inf)
 
-        return message_curr, (log_lik, message_curr)
+        return log_message_curr, (log_lik, log_message_curr)
 
-    # Pad first message to max_block_size
-    message_0_padded = jnp.pad(message_0, (0, max_block_size - len(message_0)))
+    # Pad first message to max_block_size (use -inf for padding)
+    log_message_0_padded = jnp.pad(
+        log_message_0,
+        (0, max_block_size - len(log_message_0)),
+        constant_values=-jnp.inf
+    )
 
     # Prepare inputs for scan
     inputs = (block_actions, block_i_starts, block_i_sizes, block_j_starts, block_j_sizes)
 
-    # Run scan
-    _, (log_liks_rest, messages_rest) = lax.scan(scan_step, message_0_padded, inputs)
+    # Run scan with log-space messages
+    _, (log_liks_rest, log_messages_rest) = lax.scan(scan_step, log_message_0_padded, inputs)
 
     # Concatenate results
     log_likelihoods = jnp.concatenate([jnp.array([log_lik_0]), log_liks_rest])
 
     if store_messages:
-        # Unpad messages and flatten into single array
+        # Unpad log messages and flatten into single array
         # Extract only the valid (unpadded) parts based on j_sizes
-        messages_unpadded = []
+        log_messages_unpadded = []
         for t, j_size in enumerate(block_j_sizes.tolist()):
-            messages_unpadded.append(messages_rest[t, :j_size])
+            log_messages_unpadded.append(log_messages_rest[t, :j_size])
 
-        # Flatten messages into single array (ragged array compressed into 1D)
-        alpha = jnp.concatenate([message_0] + messages_unpadded)
-        return log_likelihoods, alpha
+        # Flatten log messages into single array (ragged array compressed into 1D)
+        log_alpha = jnp.concatenate([log_message_0] + log_messages_unpadded)
+        return log_likelihoods, log_alpha
     else:
         return log_likelihoods, None
 
@@ -166,32 +186,37 @@ def backward(
     observations: jax.Array,
     actions: jax.Array
 ) -> jax.Array:
-    """Backward algorithm using lax.scan.
+    """Backward algorithm using lax.scan with log-space arithmetic.
 
-    Computes beta[t] = P(x_{t+1:T}, a_{t:T-1} | z_t) for each timestep.
+    Computes log beta[t] = log P(x_{t+1:T}, a_{t:T-1} | z_t) for each timestep.
+
+    Uses log-space arithmetic throughout for numerical stability and speed.
 
     Args:
-        T: Transition matrix [n_actions, n_states, n_states]
+        T: Transition matrix [n_actions, n_states, n_states] (probability space)
         n_clones: Clones per observation [n_obs]
         observations: Observation sequence [T]
         actions: Action sequence [T-1]
 
     Returns:
-        beta: Backward messages (compressed) [varies]
+        log_beta: Log backward messages (compressed) [varies]
     """
+    # Convert to log-space once at start
+    log_T = jnp.log(T + 1e-45)
+
     # Compute indices for clone locations
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
     mess_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones[observations])])
 
-    # Initialize last message
+    # Initialize last message in log-space (uniform distribution)
     # Convert to Python int to avoid JAX tracing issues
     i = int(observations[-1])
     i_start, i_stop = int(state_loc[i]), int(state_loc[i + 1])
     n_clones_i = i_stop - i_start
-    message_T = jnp.ones(n_clones_i) / n_clones_i
+    log_message_T = -jnp.log(n_clones_i) * jnp.ones(n_clones_i)  # log(1/n)
 
     if len(observations) == 1:
-        return message_T
+        return log_message_T
 
     # Precompute block info for backward - determine max block size
     obs_list = observations.tolist()
@@ -229,69 +254,78 @@ def backward(
     block_j_starts_bwd = jnp.array(list(reversed(block_j_starts_bwd)), dtype=jnp.int32)
     block_j_sizes_bwd = jnp.array(list(reversed(block_j_sizes_bwd)), dtype=jnp.int32)
 
-    # Define scan step function (running backward)
-    def scan_step(message_next, inputs):
-        """Single backward step.
+    # Define scan step function (running backward) in log-space
+    def scan_step(log_message_next, inputs):
+        """Single backward step in log-space.
 
         Args:
-            message_next: Next message [max_block_size] (padded)
+            log_message_next: Next log message [max_block_size] (padded)
             inputs: (a, i_start, i_size, j_start, j_size)
 
         Returns:
-            message_curr: Current message [max_block_size] (padded)
-            message_curr: Output to collect
+            log_message_curr: Current log message [max_block_size] (padded)
+            log_message_curr: Output to collect
         """
         a, i_start, i_size, j_start, j_size = inputs
 
-        # Extract T block with static size
-        T_block = lax.dynamic_slice(
-            T[a],
+        # Extract log T block with static size
+        log_T_block = lax.dynamic_slice(
+            log_T[a],
             (i_start, j_start),
             (max_block_size, max_block_size)
         )
 
-        # Apply masking
+        # Apply masking (use -inf for invalid entries)
         i_mask = jnp.arange(max_block_size) < i_size
         j_mask = jnp.arange(max_block_size) < j_size
 
-        # Mask message_next and T_block
-        message_next_masked = jnp.where(j_mask, message_next, 0.0)
+        # Mask log_message_next and log_T_block
+        log_message_next_masked = jnp.where(j_mask, log_message_next, -jnp.inf)
         T_mask = i_mask[:, None] & j_mask[None, :]
-        T_block_masked = jnp.where(T_mask, T_block, 0.0)
+        log_T_block_masked = jnp.where(T_mask, log_T_block, -jnp.inf)
 
-        # Compute transition
-        message_curr = T_block_masked @ message_next_masked
+        # Compute transition in log-space: log(T @ exp(log_beta))
+        # = logsumexp(log_T + log_beta, axis=1)
+        log_message_curr = logsumexp(
+            log_T_block_masked + log_message_next_masked[None, :],
+            axis=1
+        )
 
-        # Normalize (only over valid entries)
-        p_obs = jnp.sum(jnp.where(i_mask, message_curr, 0.0))
-        message_curr = jnp.where(i_mask, message_curr / p_obs, 0.0)
+        # Normalize using logsumexp (only over valid entries)
+        log_message_curr_masked = jnp.where(i_mask, log_message_curr, -jnp.inf)
+        log_norm = logsumexp(log_message_curr_masked)
+        log_message_curr = jnp.where(i_mask, log_message_curr - log_norm, -jnp.inf)
 
-        return message_curr, message_curr
+        return log_message_curr, log_message_curr
 
-    # Pad last message to max_block_size
-    message_T_padded = jnp.pad(message_T, (0, max_block_size - len(message_T)))
+    # Pad last message to max_block_size (use -inf for padding)
+    log_message_T_padded = jnp.pad(
+        log_message_T,
+        (0, max_block_size - len(log_message_T)),
+        constant_values=-jnp.inf
+    )
 
     # Prepare inputs for scan
     inputs_bwd = (block_actions_bwd, block_i_starts_bwd, block_i_sizes_bwd,
                   block_j_starts_bwd, block_j_sizes_bwd)
 
-    # Run scan
-    _, messages_rest = lax.scan(scan_step, message_T_padded, inputs_bwd)
+    # Run scan with log-space messages
+    _, log_messages_rest = lax.scan(scan_step, log_message_T_padded, inputs_bwd)
 
-    # Unpad and reverse messages, then flatten
+    # Unpad and reverse log messages, then flatten
     # Remember: block_i_sizes_bwd was reversed, so reverse it back for unpacking
     i_sizes_forward = list(reversed(block_i_sizes_bwd.tolist()))
 
-    messages_unpadded = []
+    log_messages_unpadded = []
     for t, i_size in enumerate(i_sizes_forward):
-        # messages_rest is in reversed order, so we index from the end
+        # log_messages_rest is in reversed order, so we index from the end
         msg_idx = len(i_sizes_forward) - 1 - t
-        messages_unpadded.append(messages_rest[msg_idx, :i_size])
+        log_messages_unpadded.append(log_messages_rest[msg_idx, :i_size])
 
-    # Flatten messages into single array (ragged array compressed into 1D)
-    beta = jnp.concatenate(messages_unpadded + [message_T])
+    # Flatten log messages into single array (ragged array compressed into 1D)
+    log_beta = jnp.concatenate(log_messages_unpadded + [log_message_T])
 
-    return beta
+    return log_beta
 
 
 def viterbi(
