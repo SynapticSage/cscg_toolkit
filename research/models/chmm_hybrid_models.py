@@ -89,38 +89,21 @@ class MNISTWithCHMM(nn.Module):
         # CHMM inference (vmap batched - 16.3x speedup!)
         log_likelihood, posteriors_padded = self.chmm.forward_batch(observations, actions)  # (batch,), (batch, T, max_block_size)
 
-        # Convert padded posteriors to aggregated features
+        # Convert padded posteriors to feature vectors
         # Posteriors are [batch, T, max_block_size] in probability space
-        # Average over time to get [batch, max_block_size]
-        posteriors_list = []
-        for i in range(batch_size):
-            # Average posteriors over time dimension
-            posteriors_seq = posteriors_padded[i].mean(dim=0)  # (max_block_size,)
-            posteriors_list.append(posteriors_seq)
+        # Flatten to [batch, T * max_block_size] to get rich features
+        batch_size = posteriors_padded.size(0)
+        T = posteriors_padded.size(1)
+        max_block_size = posteriors_padded.size(2)
 
-        # Aggregate CHMM posteriors via padding + adaptive pooling
-        # Posteriors vary in length due to compression, so we pad to max length
-        max_len = max(p.size(0) for p in posteriors_list)
+        # Flatten time and state dimensions
+        posteriors_flat = posteriors_padded.reshape(batch_size, T * max_block_size)  # (batch, T*max_block_size)
 
-        padded_posteriors = []
-        for p in posteriors_list:
-            if p.size(0) < max_len:
-                # Pad shorter posteriors with zeros
-                padded = F.pad(p, (0, max_len - p.size(0)), value=0.0)
-            else:
-                padded = p
-            padded_posteriors.append(padded)
-
-        padded = torch.stack(padded_posteriors)  # (batch, max_len)
-
-        # Adaptive pooling to n_states dimension
-        if max_len != self.fc1.in_features:
-            chmm_features = F.adaptive_avg_pool1d(
-                padded.unsqueeze(1),  # (batch, 1, max_len)
-                self.fc1.in_features
-            ).squeeze(1)  # (batch, n_states)
-        else:
-            chmm_features = padded
+        # Adaptive pool to n_states dimension for FC layers
+        chmm_features = F.adaptive_avg_pool1d(
+            posteriors_flat.unsqueeze(1),  # (batch, 1, T*max_block_size)
+            self.fc1.in_features  # pool to n_states
+        ).squeeze(1)  # (batch, n_states)
 
         # Classifier
         x = F.relu(self.fc1(chmm_features))
@@ -260,36 +243,21 @@ class MNISTWithCHMMSensory(nn.Module):
         # Sensory CHMM inference (vmap batched - 16.3x speedup!)
         log_likelihood, posteriors_padded = self.chmm.forward_batch(observations)  # (batch,), (batch, T, max_block_size)
 
-        # Convert padded posteriors to aggregated features
+        # Convert padded posteriors to feature vectors
         # Posteriors are [batch, T, max_block_size] in probability space
-        # Average over time to get [batch, max_block_size]
-        posteriors_list = []
-        for i in range(batch_size):
-            # Average posteriors over time dimension
-            posteriors_seq = posteriors_padded[i].mean(dim=0)  # (max_block_size,)
-            posteriors_list.append(posteriors_seq)
+        # Flatten to [batch, T * max_block_size] to get rich features
+        batch_size = posteriors_padded.size(0)
+        T = posteriors_padded.size(1)
+        max_block_size = posteriors_padded.size(2)
 
-        # Aggregate CHMM posteriors (same as MNISTWithCHMM)
-        max_len = max(p.size(0) for p in posteriors_list)
+        # Flatten time and state dimensions
+        posteriors_flat = posteriors_padded.reshape(batch_size, T * max_block_size)
 
-        padded_posteriors = []
-        for p in posteriors_list:
-            if p.size(0) < max_len:
-                padded = F.pad(p, (0, max_len - p.size(0)), value=0.0)
-            else:
-                padded = p
-            padded_posteriors.append(padded)
-
-        padded = torch.stack(padded_posteriors)  # (batch, max_len)
-
-        # Adaptive pooling to n_states dimension
-        if max_len != self.fc1.in_features:
-            chmm_features = F.adaptive_avg_pool1d(
-                padded.unsqueeze(1),  # (batch, 1, max_len)
-                self.fc1.in_features
-            ).squeeze(1)  # (batch, n_states)
-        else:
-            chmm_features = padded
+        # Adaptive pool to n_states dimension for FC layers
+        chmm_features = F.adaptive_avg_pool1d(
+            posteriors_flat.unsqueeze(1),
+            self.fc1.in_features
+        ).squeeze(1)
 
         # Classifier (same as MNISTWithCHMM)
         x = F.relu(self.fc1(chmm_features))
@@ -329,12 +297,17 @@ class SequentialMNISTWithCHMM(nn.Module):
 
         self.n_states = n_states
 
+        # Compute max_block_size from n_states (assuming uniform clones)
+        # For n_states=81 with 9 observations: 81/9 = 9 clones per observation
+        n_observations = 9  # Default for Sequential MNIST
+        max_block_size = n_states // n_observations
+
         # CHMM layer
         self.chmm = TorchCHMM(n_states=n_states, n_actions=n_actions)
 
-        # LSTM on CHMM posteriors
+        # LSTM on CHMM posteriors (now takes state distributions as input)
         self.lstm = nn.LSTM(
-            input_size=1,  # Will use aggregated CHMM posterior
+            input_size=max_block_size,  # State distribution per timestep
             hidden_size=lstm_hidden,
             batch_first=True
         )
@@ -362,28 +335,9 @@ class SequentialMNISTWithCHMM(nn.Module):
         # CHMM inference (vmap batched - 16.3x speedup!)
         log_likelihood, posteriors_padded = self.chmm.forward_batch(observations, actions)  # (batch,), (batch, seq_len, max_block_size)
 
-        # Convert padded posteriors to aggregated features
-        posteriors_list = []
-        for i in range(batch_size):
-            posteriors_seq = posteriors_padded[i].mean(dim=0)  # (max_block_size,)
-            posteriors_list.append(posteriors_seq)
-
-        # Create LSTM input from CHMM posteriors
-        # Pad posteriors to max length for batch processing
-        max_len = max(p.size(0) for p in posteriors_list)
-
-        padded_posteriors = []
-        for p in posteriors_list:
-            if p.size(0) < max_len:
-                padded = F.pad(p, (0, max_len - p.size(0)), value=0.0)
-            else:
-                padded = p
-            padded_posteriors.append(padded)
-
-        padded = torch.stack(padded_posteriors)  # (batch, max_len)
-
-        # Use padded posteriors as LSTM input (sequence of posterior states)
-        lstm_input = padded.unsqueeze(-1)  # (batch, max_len, 1)
+        # Use posteriors directly as LSTM input (sequence of state distributions over time)
+        # posteriors_padded is [batch, seq_len, max_block_size]
+        lstm_input = posteriors_padded  # (batch, seq_len, max_block_size)
 
         # LSTM forward
         lstm_out, _ = self.lstm(lstm_input)

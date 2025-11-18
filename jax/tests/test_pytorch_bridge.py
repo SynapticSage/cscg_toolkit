@@ -48,7 +48,7 @@ def test_torch_chmm_viterbi_no_gradients():
     actions = torch.tensor([2, 2, 1, 3], dtype=torch.long)
 
     # Ensure CHMM parameters require gradients
-    assert chmm.T.requires_grad
+    assert chmm.log_T_logits.requires_grad
     assert chmm.Pi_x.requires_grad
 
     # Run Viterbi
@@ -64,7 +64,7 @@ def test_torch_chmm_viterbi_no_gradients():
     try:
         log_prob_copy.backward()
         # If we get here, the gradient should be None for parameters
-        assert chmm.T.grad is None
+        assert chmm.log_T_logits.grad is None
         assert chmm.Pi_x.grad is None
     except RuntimeError:
         # This is also acceptable - Viterbi shouldn't support backprop
@@ -255,9 +255,9 @@ def test_torch_chmm_forward_batch_gradients():
     loss.backward()
 
     # Check gradients exist
-    assert chmm.T.grad is not None
+    assert chmm.log_T_logits.grad is not None
     assert chmm.Pi_x.grad is not None
-    assert torch.all(torch.isfinite(chmm.T.grad))
+    assert torch.all(torch.isfinite(chmm.log_T_logits.grad))
     assert torch.all(torch.isfinite(chmm.Pi_x.grad))
 
 
