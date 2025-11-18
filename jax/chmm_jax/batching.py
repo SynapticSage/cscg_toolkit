@@ -6,12 +6,14 @@ This module provides true parallelized batching using JAX vmap, achieving
 same length (padding must be done externally).
 
 Created: 2025-11-17
+Modified: 2025-11-17
 """
 
 from typing import Tuple
 import jax
 import jax.numpy as jnp
 from jax import lax
+from jax.scipy.special import logsumexp
 
 from .core import CHMM
 
@@ -23,14 +25,16 @@ def forward_vmap(
     observations: jax.Array,
     actions: jax.Array,
 ) -> jax.Array:
-    """Vmap-optimized forward algorithm for same-length sequences.
+    """Vmap-optimized forward algorithm with log-space arithmetic for same-length sequences.
 
     This implementation is fully JAX-native (no Python conversions) and can
     be efficiently vmapped for parallel batch processing.
 
+    Uses log-space arithmetic for numerical stability and speed.
+
     Args:
-        T: Transition matrix [n_actions, n_states, n_states]
-        Pi_x: Initial state distribution [n_states]
+        T: Transition matrix [n_actions, n_states, n_states] (probability space)
+        Pi_x: Initial state distribution [n_states] (probability space)
         n_clones: Clones per observation [n_obs]
         observations: Observation sequence [T]
         actions: Action sequence [T-1]
@@ -42,30 +46,33 @@ def forward_vmap(
         This function is designed to be vmapped. Use forward_batch() for
         convenient batched inference.
     """
+    # Convert to log-space once at start
+    log_T = jnp.log(T + 1e-45)
+    log_Pi_x = jnp.log(Pi_x + 1e-45)
+
     # Compute state locations (clone boundaries)
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
 
     # Get maximum clone block size for padding
     max_block_size = jnp.max(n_clones).astype(jnp.int32)
 
-    # Initialize first message (t=0)
+    # Initialize first message (t=0) in log-space
     # Use dynamic_slice to extract initial message for first observation
     obs_0 = observations[0]
     start_idx = state_loc[obs_0]
     size = state_loc[obs_0 + 1] - start_idx
 
-    message_0 = lax.dynamic_slice(Pi_x, (start_idx,), (max_block_size,))
+    log_message_0 = lax.dynamic_slice(log_Pi_x, (start_idx,), (max_block_size,))
 
-    # Mask and normalize
+    # Mask and normalize in log-space
     mask_0 = jnp.arange(max_block_size) < size
-    message_0 = jnp.where(mask_0, message_0, 0.0)
-    p_obs_0 = jnp.sum(message_0)
-    message_0 = message_0 / p_obs_0
-    log_lik_0 = jnp.log(p_obs_0)
+    log_message_0 = jnp.where(mask_0, log_message_0, -jnp.inf)
+    log_lik_0 = logsumexp(log_message_0)
+    log_message_0 = log_message_0 - log_lik_0
 
-    # Define scan step for forward algorithm
-    def scan_step(message_prev, inputs):
-        """Single forward step (vmap-compatible)."""
+    # Define scan step for forward algorithm in log-space
+    def scan_step(log_message_prev, inputs):
+        """Single forward step in log-space (vmap-compatible)."""
         obs_i, obs_j, action = inputs
 
         # Get state indices for observations
@@ -74,10 +81,10 @@ def forward_vmap(
         j_start = state_loc[obs_j]
         j_size = state_loc[obs_j + 1] - j_start
 
-        # Extract transition block with dynamic_slice
-        # T[action] is [n_states, n_states], extract [j_start:j_start+max, i_start:i_start+max]
-        T_block = lax.dynamic_slice(
-            T[action],
+        # Extract log transition block with dynamic_slice
+        # log_T[action] is [n_states, n_states], extract [j_start:j_start+max, i_start:i_start+max]
+        log_T_block = lax.dynamic_slice(
+            log_T[action],
             (j_start, i_start),
             (max_block_size, max_block_size)
         )
@@ -86,28 +93,32 @@ def forward_vmap(
         i_mask = jnp.arange(max_block_size) < i_size
         j_mask = jnp.arange(max_block_size) < j_size
 
-        # Mask previous message and transition matrix
-        message_prev_masked = jnp.where(i_mask, message_prev, 0.0)
+        # Mask previous log message and log transition matrix (use -inf for invalid)
+        log_message_prev_masked = jnp.where(i_mask, log_message_prev, -jnp.inf)
         T_mask = j_mask[:, None] & i_mask[None, :]
-        T_block_masked = jnp.where(T_mask, T_block, 0.0)
+        log_T_block_masked = jnp.where(T_mask, log_T_block, -jnp.inf)
 
-        # Compute message update
-        message_curr = T_block_masked @ message_prev_masked
+        # Compute message update in log-space: log(T @ exp(log_alpha))
+        # = logsumexp(log_T + log_alpha, axis=1)
+        log_message_curr = logsumexp(
+            log_T_block_masked + log_message_prev_masked[None, :],
+            axis=1
+        )
 
-        # Normalize
-        p_obs = jnp.sum(jnp.where(j_mask, message_curr, 0.0))
-        message_curr = jnp.where(j_mask, message_curr / p_obs, 0.0)
-        log_lik = jnp.log(p_obs)
+        # Normalize in log-space
+        log_message_curr_masked = jnp.where(j_mask, log_message_curr, -jnp.inf)
+        log_lik = logsumexp(log_message_curr_masked)
+        log_message_curr = jnp.where(j_mask, log_message_curr - log_lik, -jnp.inf)
 
-        return message_curr, log_lik
+        return log_message_curr, log_lik
 
     # Prepare scan inputs (all timesteps t=1 to T-1)
     obs_prev = observations[:-1]  # observations at t-1
     obs_curr = observations[1:]   # observations at t
     scan_inputs = (obs_prev, obs_curr, actions)
 
-    # Run forward scan
-    _, log_liks_rest = lax.scan(scan_step, message_0, scan_inputs)
+    # Run forward scan with log messages
+    _, log_liks_rest = lax.scan(scan_step, log_message_0, scan_inputs)
 
     # Sum all log-likelihoods
     total_log_lik = log_lik_0 + jnp.sum(log_liks_rest)
@@ -156,51 +167,56 @@ def backward_vmap(
     observations: jax.Array,
     actions: jax.Array,
 ) -> jax.Array:
-    """Vmap-optimized backward algorithm for same-length sequences.
+    """Vmap-optimized backward algorithm with log-space arithmetic for same-length sequences.
 
     This implementation is fully JAX-native (no Python conversions) and can
     be efficiently vmapped for parallel batch processing.
 
+    Uses log-space arithmetic for numerical stability and speed.
+
     Args:
-        T: Transition matrix [n_actions, n_states, n_states]
+        T: Transition matrix [n_actions, n_states, n_states] (probability space)
         n_clones: Clones per observation [n_obs]
         observations: Observation sequence [T]
         actions: Action sequence [T-1]
 
     Returns:
-        beta: Backward messages (padded) [T, max_block_size]
+        log_beta: Log backward messages (padded) [T, max_block_size]
 
     Note:
-        Returns padded messages for all timesteps. Use masking to extract
+        Returns padded log messages for all timesteps. Use masking to extract
         valid entries based on n_clones[observations[t]].
     """
+    # Convert to log-space once at start
+    log_T = jnp.log(T + 1e-45)
+
     # Compute state locations (clone boundaries)
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
 
     # Get maximum clone block size for padding
     max_block_size = jnp.max(n_clones).astype(jnp.int32)
 
-    # Initialize last message (t=T-1)
+    # Initialize last message (t=T-1) in log-space
     obs_T = observations[-1]
     start_idx = state_loc[obs_T]
     size = state_loc[obs_T + 1] - start_idx
 
-    # Start with uniform distribution
-    message_T = jnp.ones(max_block_size) / size
+    # Start with uniform distribution in log-space: log(1/size)
+    log_message_T = -jnp.log(size) * jnp.ones(max_block_size)
     mask_T = jnp.arange(max_block_size) < size
-    message_T = jnp.where(mask_T, message_T, 0.0)
+    log_message_T = jnp.where(mask_T, log_message_T, -jnp.inf)
 
-    # Define scan step for backward algorithm (running backward in time)
-    def scan_step(message_next, inputs):
-        """Single backward step (vmap-compatible).
+    # Define scan step for backward algorithm (running backward in time) in log-space
+    def scan_step(log_message_next, inputs):
+        """Single backward step in log-space (vmap-compatible).
 
         Args:
-            message_next: Next message (at t+1) [max_block_size]
+            log_message_next: Next log message (at t+1) [max_block_size]
             inputs: (obs_t, obs_t+1, action_t)
 
         Returns:
-            message_curr: Current message (at t) [max_block_size]
-            message_curr: Output to collect
+            log_message_curr: Current log message (at t) [max_block_size]
+            log_message_curr: Output to collect
         """
         obs_i, obs_j, action = inputs
 
@@ -210,10 +226,10 @@ def backward_vmap(
         j_start = state_loc[obs_j]
         j_size = state_loc[obs_j + 1] - j_start
 
-        # Extract transition block with dynamic_slice
-        # T[action, i_start:i_start+max, j_start:j_start+max]
-        T_block = lax.dynamic_slice(
-            T[action],
+        # Extract log transition block with dynamic_slice
+        # log_T[action, i_start:i_start+max, j_start:j_start+max]
+        log_T_block = lax.dynamic_slice(
+            log_T[action],
             (i_start, j_start),
             (max_block_size, max_block_size)
         )
@@ -222,19 +238,24 @@ def backward_vmap(
         i_mask = jnp.arange(max_block_size) < i_size
         j_mask = jnp.arange(max_block_size) < j_size
 
-        # Mask next message and transition matrix
-        message_next_masked = jnp.where(j_mask, message_next, 0.0)
+        # Mask next log message and log transition matrix (use -inf for invalid)
+        log_message_next_masked = jnp.where(j_mask, log_message_next, -jnp.inf)
         T_mask = i_mask[:, None] & j_mask[None, :]
-        T_block_masked = jnp.where(T_mask, T_block, 0.0)
+        log_T_block_masked = jnp.where(T_mask, log_T_block, -jnp.inf)
 
-        # Compute message update (backward: T @ message_next)
-        message_curr = T_block_masked @ message_next_masked
+        # Compute message update in log-space (backward: log(T @ exp(log_beta)))
+        # = logsumexp(log_T + log_beta, axis=1)
+        log_message_curr = logsumexp(
+            log_T_block_masked + log_message_next_masked[None, :],
+            axis=1
+        )
 
-        # Normalize
-        p_obs = jnp.sum(jnp.where(i_mask, message_curr, 0.0))
-        message_curr = jnp.where(i_mask, message_curr / p_obs, 0.0)
+        # Normalize in log-space
+        log_message_curr_masked = jnp.where(i_mask, log_message_curr, -jnp.inf)
+        log_norm = logsumexp(log_message_curr_masked)
+        log_message_curr = jnp.where(i_mask, log_message_curr - log_norm, -jnp.inf)
 
-        return message_curr, message_curr
+        return log_message_curr, log_message_curr
 
     # Prepare scan inputs (all timesteps t=T-2 to 0, in reverse)
     obs_prev = observations[:-1][::-1]  # observations at t (reversed)
@@ -242,14 +263,14 @@ def backward_vmap(
     acts_reversed = actions[::-1]       # actions at t (reversed)
     scan_inputs = (obs_prev, obs_curr, acts_reversed)
 
-    # Run backward scan
-    _, messages_rest = lax.scan(scan_step, message_T, scan_inputs)
+    # Run backward scan with log messages
+    _, log_messages_rest = lax.scan(scan_step, log_message_T, scan_inputs)
 
-    # Reverse messages to get forward time order, then concatenate with message_T
-    messages_rest_forward = messages_rest[::-1]
-    beta_all = jnp.concatenate([messages_rest_forward, message_T[None, :]], axis=0)
+    # Reverse log messages to get forward time order, then concatenate with log_message_T
+    log_messages_rest_forward = log_messages_rest[::-1]
+    log_beta_all = jnp.concatenate([log_messages_rest_forward, log_message_T[None, :]], axis=0)
 
-    return beta_all
+    return log_beta_all
 
 
 def forward_backward_batch(
