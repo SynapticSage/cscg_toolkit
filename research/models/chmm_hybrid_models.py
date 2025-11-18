@@ -87,14 +87,15 @@ class MNISTWithCHMM(nn.Module):
         actions = self._generate_actions(observations)  # (batch, 48)
 
         # CHMM inference (vmap batched - 16.3x speedup!)
-        log_likelihood, posteriors_padded = self.chmm.forward_batch(observations, actions)  # (batch,), (batch, 49, max_block_size)
+        log_likelihood, posteriors_padded = self.chmm.forward_batch(observations, actions)  # (batch,), (batch, T, max_block_size)
 
-        # Convert padded posteriors to list format for compatibility with downstream code
+        # Convert padded posteriors to aggregated features
+        # Posteriors are [batch, T, max_block_size] in probability space
+        # Average over time to get [batch, max_block_size]
         posteriors_list = []
         for i in range(batch_size):
-            # Extract valid (non-padded) posteriors for each sequence
-            # Note: posteriors are already aggregated, so we flatten the time dimension
-            posteriors_seq = posteriors_padded[i].sum(dim=0)  # (max_block_size,) - sum over time
+            # Average posteriors over time dimension
+            posteriors_seq = posteriors_padded[i].mean(dim=0)  # (max_block_size,)
             posteriors_list.append(posteriors_seq)
 
         # Aggregate CHMM posteriors via padding + adaptive pooling
@@ -257,14 +258,15 @@ class MNISTWithCHMMSensory(nn.Module):
         observations = self._quantize_observations(x)  # (batch, 49)
 
         # Sensory CHMM inference (vmap batched - 16.3x speedup!)
-        log_likelihood, posteriors_padded = self.chmm.forward_batch(observations)  # (batch,), (batch, 49, max_block_size)
+        log_likelihood, posteriors_padded = self.chmm.forward_batch(observations)  # (batch,), (batch, T, max_block_size)
 
-        # Convert padded posteriors to list format for compatibility with downstream code
+        # Convert padded posteriors to aggregated features
+        # Posteriors are [batch, T, max_block_size] in probability space
+        # Average over time to get [batch, max_block_size]
         posteriors_list = []
         for i in range(batch_size):
-            # Extract valid (non-padded) posteriors for each sequence
-            # Sum over time dimension to get aggregated posteriors
-            posteriors_seq = posteriors_padded[i].sum(dim=0)  # (max_block_size,)
+            # Average posteriors over time dimension
+            posteriors_seq = posteriors_padded[i].mean(dim=0)  # (max_block_size,)
             posteriors_list.append(posteriors_seq)
 
         # Aggregate CHMM posteriors (same as MNISTWithCHMM)
@@ -360,10 +362,10 @@ class SequentialMNISTWithCHMM(nn.Module):
         # CHMM inference (vmap batched - 16.3x speedup!)
         log_likelihood, posteriors_padded = self.chmm.forward_batch(observations, actions)  # (batch,), (batch, seq_len, max_block_size)
 
-        # Convert padded posteriors to list format for compatibility
+        # Convert padded posteriors to aggregated features
         posteriors_list = []
         for i in range(batch_size):
-            posteriors_seq = posteriors_padded[i].sum(dim=0)  # (max_block_size,)
+            posteriors_seq = posteriors_padded[i].mean(dim=0)  # (max_block_size,)
             posteriors_list.append(posteriors_seq)
 
         # Create LSTM input from CHMM posteriors

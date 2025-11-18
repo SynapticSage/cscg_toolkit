@@ -5,8 +5,11 @@ This module provides true parallelized batching using JAX vmap, achieving
 10-50x speedup compared to Python loops. Requires all sequences to be the
 same length (padding must be done externally).
 
+Returns smoothed posteriors gamma = (alpha * beta) / Z in probability space
+for compatibility with downstream neural network layers.
+
 Created: 2025-11-17
-Modified: 2025-11-17
+Modified: 2025-11-17 (fixed posteriors to return probability space)
 """
 
 from typing import Tuple
@@ -320,6 +323,8 @@ def _forward_backward_single(
 ) -> Tuple[jax.Array, jax.Array]:
     """Single sequence forward-backward (vmap-compatible).
 
+    Computes smoothed posteriors gamma = (alpha * beta) / Z in probability space.
+
     Args:
         T: Transition matrix [n_actions, n_states, n_states]
         Pi_x: Initial state distribution [n_states]
@@ -329,20 +334,81 @@ def _forward_backward_single(
 
     Returns:
         log_likelihood: Total log P(x, a) (scalar)
-        posteriors: Smoothed posteriors [T, max_block_size] (padded)
+        posteriors: Smoothed posteriors [T, max_block_size] (padded, probability space)
     """
-    # Run forward for log-likelihood (we need the messages too)
-    # For now, let's compute forward and backward separately
-    # TODO: Optimize to store forward messages and reuse
+    # We need to compute forward messages (alpha) to get full posteriors
+    # For now, use a modified forward that stores messages
 
-    # Compute log-likelihood from forward pass
-    log_lik = forward_vmap(T, Pi_x, n_clones, observations, actions)
+    # Convert to log-space
+    log_T = jnp.log(T + 1e-45)
+    log_Pi_x = jnp.log(Pi_x + 1e-45)
+
+    state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
+    max_block_size = jnp.max(n_clones).astype(jnp.int32)
+
+    # Initialize first forward message
+    obs_0 = observations[0]
+    start_idx = state_loc[obs_0]
+    size = state_loc[obs_0 + 1] - start_idx
+
+    log_message_0 = lax.dynamic_slice(log_Pi_x, (start_idx,), (max_block_size,))
+    mask_0 = jnp.arange(max_block_size) < size
+    log_message_0 = jnp.where(mask_0, log_message_0, -jnp.inf)
+    log_lik_0 = logsumexp(log_message_0)
+    log_message_0 = log_message_0 - log_lik_0
+
+    # Forward scan WITH message storage
+    def forward_scan_step(log_message_prev, inputs):
+        obs_i, obs_j, action = inputs
+
+        i_start = state_loc[obs_i]
+        i_size = state_loc[obs_i + 1] - i_start
+        j_start = state_loc[obs_j]
+        j_size = state_loc[obs_j + 1] - j_start
+
+        log_T_block = lax.dynamic_slice(
+            log_T[action], (j_start, i_start), (max_block_size, max_block_size)
+        )
+
+        i_mask = jnp.arange(max_block_size) < i_size
+        j_mask = jnp.arange(max_block_size) < j_size
+
+        log_message_prev_masked = jnp.where(i_mask, log_message_prev, -jnp.inf)
+        T_mask = j_mask[:, None] & i_mask[None, :]
+        log_T_block_masked = jnp.where(T_mask, log_T_block, -jnp.inf)
+
+        log_message_curr = logsumexp(
+            log_T_block_masked + log_message_prev_masked[None, :], axis=1
+        )
+
+        log_message_curr_masked = jnp.where(j_mask, log_message_curr, -jnp.inf)
+        log_lik = logsumexp(log_message_curr_masked)
+        log_message_curr = jnp.where(j_mask, log_message_curr - log_lik, -jnp.inf)
+
+        return log_message_curr, (log_lik, log_message_curr)
+
+    obs_prev = observations[:-1]
+    obs_curr = observations[1:]
+    scan_inputs = (obs_prev, obs_curr, actions)
+
+    _, (log_liks_rest, log_alpha_rest) = lax.scan(forward_scan_step, log_message_0, scan_inputs)
+
+    # Concatenate all alpha messages
+    log_alpha_all = jnp.concatenate([log_message_0[None, :], log_alpha_rest], axis=0)
+
+    # Compute total log-likelihood
+    total_log_lik = log_lik_0 + jnp.sum(log_liks_rest)
 
     # Compute backward messages
-    beta_all = backward_vmap(T, n_clones, observations, actions)
+    log_beta_all = backward_vmap(T, n_clones, observations, actions)
 
-    # For posterior computation, we would need forward messages (alpha)
-    # For now, return log_lik and backward messages as placeholder
-    # TODO: Implement full posterior computation
+    # Compute smoothed posteriors: log_gamma = log_alpha + log_beta
+    log_gamma = log_alpha_all + log_beta_all
 
-    return log_lik, beta_all
+    # Normalize per timestep
+    log_gamma_normalized = log_gamma - logsumexp(log_gamma, axis=1, keepdims=True)
+
+    # Convert to probability space for compatibility with downstream code
+    gamma = jnp.exp(log_gamma_normalized)
+
+    return total_log_lik, gamma
