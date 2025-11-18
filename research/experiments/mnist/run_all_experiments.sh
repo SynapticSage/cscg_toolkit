@@ -20,29 +20,23 @@ echo -e "${BLUE}MNIST CHMM Experiments${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
-# Find and activate virtual environment
-VENV_PATH=""
+# Find repo root (where .venv is located)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+VENV_PATH="${REPO_ROOT}/.venv"
 
-# Check common venv locations
-if [ -d "../../../venv" ]; then
-    VENV_PATH="../../../venv"
-elif [ -d "../../venv" ]; then
-    VENV_PATH="../../venv"
-elif [ -d "../venv" ]; then
-    VENV_PATH="../venv"
-elif [ -d "./venv" ]; then
-    VENV_PATH="./venv"
-else
-    echo -e "${RED}Error: Virtual environment not found!${NC}"
-    echo "Please create a virtual environment or specify the path manually."
+# Check if venv exists
+if [ ! -d "${VENV_PATH}" ]; then
+    echo -e "${RED}Error: Virtual environment not found at ${VENV_PATH}${NC}"
+    echo "Please create a virtual environment at the repository root."
     exit 1
 fi
 
 echo -e "${GREEN}Found virtual environment at: ${VENV_PATH}${NC}"
 echo "Activating..."
 
-# Activate venv
-source "${VENV_PATH}/bin/activate"
+# Change to the mnist experiment directory
+cd "${SCRIPT_DIR}"
 
 # Verify Python
 echo -e "\n${BLUE}Python environment:${NC}"

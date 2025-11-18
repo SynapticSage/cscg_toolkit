@@ -9,6 +9,7 @@ import jax.numpy as jnp
 
 from chmm_jax import init_chmm, forward_backward, learn_em
 from chmm_jax.core import _update_T
+from chmm_jax.message_passing import viterbi
 
 
 def test_init_chmm():
@@ -111,6 +112,60 @@ def test_learn_em():
 
     # Transition matrix should still be normalized
     assert jnp.allclose(jnp.sum(chmm_trained.T, axis=2), 1.0)
+
+
+def test_viterbi():
+    """Test Viterbi algorithm for most likely path."""
+    # Simple 3x3 gridworld with 3 clones per observation
+    n_clones = jnp.array([3, 3, 3, 3, 3, 3, 3, 3, 3])
+    chmm = init_chmm(
+        n_clones=n_clones,
+        n_observations=9,
+        n_actions=4,
+        seed=42
+    )
+
+    # Gridworld sequence (from README example)
+    observations = jnp.array([0, 1, 2, 5, 4, 3, 0, 1, 2])
+    actions = jnp.array([2, 2, 1, 3, 3, 2, 2, 2])  # 0=up, 1=down, 2=left, 3=right
+
+    # Run Viterbi
+    states, log_prob = viterbi(chmm.T, chmm.Pi_x, n_clones, observations, actions)
+
+    # Check output shape
+    assert states.shape == (len(observations),)
+    assert log_prob.shape == ()
+
+    # Check log probability is finite
+    assert jnp.isfinite(log_prob)
+
+    # Check states are valid (within bounds)
+    assert jnp.all(states >= 0)
+    assert jnp.all(states < chmm.n_states)
+
+    # Check states match observations (state i belongs to observation x)
+    state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
+    for t, (obs, state) in enumerate(zip(observations, states)):
+        obs_start = state_loc[obs]
+        obs_stop = state_loc[obs + 1]
+        assert obs_start <= state < obs_stop, (
+            f"At t={t}: state {state} should be in range [{obs_start}, {obs_stop}) "
+            f"for observation {obs}"
+        )
+
+    # Test single observation case
+    states_single, log_prob_single = viterbi(
+        chmm.T, chmm.Pi_x, n_clones, observations[:1], actions[:0]
+    )
+    assert states_single.shape == (1,)
+    assert jnp.isfinite(log_prob_single)
+
+    # Test that Viterbi log-likelihood is <= forward-backward log-likelihood
+    # (Since Viterbi finds the best single path, it should have lower or equal
+    # likelihood compared to summing over all paths)
+    log_lik_fb, _ = forward_backward(chmm, observations, actions)
+    # In log space: max <= logsumexp, so viterbi_log_prob <= fb_log_lik
+    assert log_prob <= log_lik_fb + 1e-4  # Allow small numerical tolerance
 
 
 if __name__ == "__main__":

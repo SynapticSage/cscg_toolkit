@@ -58,3 +58,4 @@ jax/chmm_jax.egg-info
 intro.py
 assets/logo.html
 research/experiments/mnist/data/MNIST/raw
+research/results/logs/mnist
