@@ -59,3 +59,5 @@ intro.py
 assets/logo.html
 research/experiments/mnist/data/MNIST/raw
 research/results/logs/mnist
+
+*.pth
