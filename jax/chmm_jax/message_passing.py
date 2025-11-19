@@ -46,8 +46,8 @@ def forward(
         alpha: Log forward messages if store_messages=True, else None [varies]
     """
     # Convert to log-space once at start
-    log_T = jnp.log(T + 1e-45)  # Add epsilon to avoid log(0)
-    log_Pi_x = jnp.log(Pi_x + 1e-45)
+    log_T = jnp.log(T + 1e-10)  # Add epsilon to avoid log(0)
+    log_Pi_x = jnp.log(Pi_x + 1e-10)
 
     # Compute indices for clone locations
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])

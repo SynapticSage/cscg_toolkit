@@ -258,7 +258,7 @@ class TorchCHMM(nn.Module):
         # We parameterize as: T = softmax(log_T_logits, dim=-1)
         T_init = torch.from_numpy(np.array(self.chmm.T)).float()
         # Convert to logits (inverse of softmax): log(T)
-        self.log_T_logits = nn.Parameter(torch.log(T_init + 1e-8))
+        self.log_T_logits = nn.Parameter(torch.log(T_init + 1e-10))
 
         # Pi_x can remain direct parameter (already normalized by init_chmm)
         self.Pi_x = nn.Parameter(torch.from_numpy(np.array(self.chmm.Pi_x)).float())
@@ -415,7 +415,7 @@ class TorchCHMM(nn.Module):
         self.chmm = chmm
         # Convert T to logits (inverse of softmax)
         T_new = torch.from_numpy(np.array(chmm.T)).float()
-        self.log_T_logits.data = torch.log(T_new + 1e-8)
+        self.log_T_logits.data = torch.log(T_new + 1e-10)
         self.Pi_x.data = torch.from_numpy(np.array(chmm.Pi_x)).float()
 
 
@@ -433,7 +433,7 @@ class TorchCHMMFromPretrained(nn.Module):
 
         # Register parameters with constrained parameterization
         T_init = torch.from_numpy(np.array(chmm.T)).float()
-        self.log_T_logits = nn.Parameter(torch.log(T_init + 1e-8))
+        self.log_T_logits = nn.Parameter(torch.log(T_init + 1e-10))
         self.Pi_x = nn.Parameter(torch.from_numpy(np.array(chmm.Pi_x)).float())
 
     def forward(
@@ -576,7 +576,7 @@ class TorchCHMMSensory(nn.Module):
 
         # Register as PyTorch parameters with constrained parameterization
         T_init = torch.from_numpy(np.array(T_sensory)).float()
-        self.log_T_logits = nn.Parameter(torch.log(T_init + 1e-8))
+        self.log_T_logits = nn.Parameter(torch.log(T_init + 1e-10))
         self.Pi_x = nn.Parameter(torch.from_numpy(np.array(self.chmm.Pi_x)).float())
 
     def forward(
@@ -730,5 +730,5 @@ class TorchCHMMSensory(nn.Module):
         self.chmm = chmm
         # Convert T to logits (inverse of softmax)
         T_new = torch.from_numpy(np.array(chmm.T[0])).float()
-        self.log_T_logits.data = torch.log(T_new + 1e-8)
+        self.log_T_logits.data = torch.log(T_new + 1e-10)
         self.Pi_x.data = torch.from_numpy(np.array(chmm.Pi_x)).float()

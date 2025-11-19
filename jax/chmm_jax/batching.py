@@ -50,8 +50,8 @@ def forward_vmap(
         convenient batched inference.
     """
     # Convert to log-space once at start
-    log_T = jnp.log(T + 1e-45)
-    log_Pi_x = jnp.log(Pi_x + 1e-45)
+    log_T = jnp.log(T + 1e-10)
+    log_Pi_x = jnp.log(Pi_x + 1e-10)
 
     # Compute state locations (clone boundaries)
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
@@ -191,7 +191,7 @@ def backward_vmap(
         valid entries based on n_clones[observations[t]].
     """
     # Convert to log-space once at start
-    log_T = jnp.log(T + 1e-45)
+    log_T = jnp.log(T + 1e-10)
 
     # Compute state locations (clone boundaries)
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
@@ -340,8 +340,8 @@ def _forward_backward_single(
     # For now, use a modified forward that stores messages
 
     # Convert to log-space
-    log_T = jnp.log(T + 1e-45)
-    log_Pi_x = jnp.log(Pi_x + 1e-45)
+    log_T = jnp.log(T + 1e-10)
+    log_Pi_x = jnp.log(Pi_x + 1e-10)
 
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
     max_block_size = jnp.max(n_clones).astype(jnp.int32)
