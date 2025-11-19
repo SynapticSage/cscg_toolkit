@@ -12,46 +12,64 @@ CHMM Optimization Layers (All Active):
   = Combined multiplicative speedup across all layers
 
 Created: 2025-11-09
-Modified: 2025-11-17
+Modified: 2025-11-18 (Added quantization strategies)
 """
 
 import os
 import sys
 
 # Add jax directory to path to import chmm_jax
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'jax'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "jax"))
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 # IMPORTANT: Set JAX memory configuration BEFORE importing
-os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
-os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.5'
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
 from chmm_jax.pytorch_bridge import TorchCHMM, TorchCHMMSensory
+from .quantization import create_quantization_strategy
 
 
 class MNISTWithCHMM(nn.Module):
     """MNIST CNN with CHMM layer for structured feature learning.
 
-    Architecture: Conv layers → CHMM → MLP → Softmax
+    Architecture: Conv layers → Quantization → CHMM → MLP → Softmax
 
     Args:
         n_states: Total CHMM hidden states
         n_actions: Number of actions for CHMM transitions
         dropout: Dropout probability
+        quantization_type: Quantization strategy ('dynamic', 'fixed', 'vqvae', 'soft')
+        n_observations: Number of discrete observations (bins)
+        quantization_kwargs: Additional quantization-specific parameters
     """
 
-    def __init__(self, n_states=81, n_actions=4, dropout=0.5):
+    def __init__(self, n_states=81 * 9, n_actions=4, dropout=0.5,
+                 quantization_type='fixed', n_observations=9, **quantization_kwargs):
         super().__init__()
+
+        self.quantization_type = quantization_type
+        self.n_observations = n_observations
+        self.feature_dim = 64  # Conv2 output channels
 
         # Conv feature extractor
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
         self.pool = nn.MaxPool2d(2, 2)
 
-        # CHMM layer (9 observations with 9 clones each = 81 states)
+        # Quantization strategy
+        quant_kwargs = {'feature_dim': self.feature_dim} if quantization_type == 'vqvae' else {}
+        quant_kwargs.update(quantization_kwargs)
+        self.quantizer = create_quantization_strategy(
+            quantization_type,
+            n_bins=n_observations,
+            **quant_kwargs
+        )
+
+        # CHMM layer (n_observations with n_states/n_observations clones each)
         self.chmm = TorchCHMM(n_states=n_states, n_actions=n_actions)
 
         # Classifier on CHMM posteriors
@@ -59,6 +77,10 @@ class MNISTWithCHMM(nn.Module):
         self.fc2 = nn.Linear(128, 10)
 
         self.dropout = nn.Dropout(dropout)
+
+        # For diagnostics (accessible via NaN detection)
+        self.last_features = None
+        self.last_observations = None
 
     def forward(self, x):
         """
@@ -68,6 +90,7 @@ class MNISTWithCHMM(nn.Module):
         Returns:
             logits: (batch, 10)
             log_likelihood: (batch,) CHMM log-likelihood
+            aux_loss: Auxiliary loss (VQ-VAE commitment or 0)
         """
         batch_size = x.size(0)
 
@@ -77,17 +100,33 @@ class MNISTWithCHMM(nn.Module):
 
         # Flatten spatial dimensions to create sequence
         x = x.view(batch_size, 64, -1)  # (batch, 64, 49)
-        x = x.permute(0, 2, 1)  # (batch, 49, 64)
+        features = x.permute(0, 2, 1)  # (batch, 49, 64)
 
-        # Quantize features to discrete observations (simple binning)
-        # TODO: Replace with learned quantization (VQ-VAE style)
-        observations = self._quantize_observations(x)  # (batch, 49)
+        # Store for diagnostics
+        self.last_features = features.detach()
+
+        # Quantize features to discrete observations using selected strategy
+        aux_loss = torch.tensor(0.0, device=x.device)
+
+        if self.quantization_type == 'vqvae':
+            observations, aux_loss = self.quantizer(features)
+        elif self.quantization_type == 'soft':
+            observations, soft_probs = self.quantizer(features)
+            # Could use soft_probs for soft-CHMM in future
+        else:
+            # dynamic or fixed
+            observations = self.quantizer(features)
+
+        # Store for diagnostics
+        self.last_observations = observations.detach()
 
         # Generate actions from spatial position
         actions = self._generate_actions(observations)  # (batch, 48)
 
         # CHMM inference (vmap batched - 16.3x speedup!)
-        log_likelihood, posteriors_padded = self.chmm.forward_batch(observations, actions)  # (batch,), (batch, T, max_block_size)
+        log_likelihood, posteriors_padded = self.chmm.forward_batch(
+            observations, actions
+        )  # (batch,), (batch, T, max_block_size)
 
         # Convert padded posteriors to feature vectors
         # Posteriors are [batch, T, max_block_size] in probability space
@@ -97,43 +136,24 @@ class MNISTWithCHMM(nn.Module):
         max_block_size = posteriors_padded.size(2)
 
         # Flatten time and state dimensions
-        posteriors_flat = posteriors_padded.reshape(batch_size, T * max_block_size)  # (batch, T*max_block_size)
+        posteriors_flat = posteriors_padded.reshape(
+            batch_size, T * max_block_size
+        )  # (batch, T*max_block_size)
 
         # Adaptive pool to n_states dimension for FC layers
         chmm_features = F.adaptive_avg_pool1d(
             posteriors_flat.unsqueeze(1),  # (batch, 1, T*max_block_size)
-            self.fc1.in_features  # pool to n_states
-        ).squeeze(1)  # (batch, n_states)
+            self.fc1.in_features,  # pool to n_states
+        ).squeeze(
+            1
+        )  # (batch, n_states)
 
         # Classifier
         x = F.relu(self.fc1(chmm_features))
         x = self.dropout(x)
         logits = self.fc2(x)
 
-        return logits, log_likelihood
-
-    def _quantize_observations(self, features):
-        """Quantize continuous features to discrete observations.
-
-        Args:
-            features: (batch, seq_len, feature_dim)
-
-        Returns:
-            observations: (batch, seq_len) int32
-        """
-        # Simple binning: cluster feature vectors into 9 bins
-        # Based on L2 norm (placeholder - replace with K-means or learned codebook)
-        norms = torch.norm(features, dim=-1)  # (batch, seq_len)
-
-        # Bin into 9 quantiles
-        n_bins = 9
-        percentiles = torch.linspace(0, 100, n_bins + 1, device=features.device)
-        bins = torch.quantile(norms.flatten(), percentiles / 100.0)
-
-        observations = torch.searchsorted(bins, norms, right=True) - 1
-        observations = observations.clamp(0, n_bins - 1).long()
-
-        return observations
+        return logits, log_likelihood, aux_loss
 
     def _generate_actions(self, observations, grid_h=7, grid_w=7):
         """Generate actions based on spatial grid navigation (raster scan order).
@@ -183,7 +203,9 @@ class MNISTWithCHMM(nn.Module):
 
             actions_list.append(action)
 
-        actions = torch.tensor(actions_list, device=observations.device, dtype=torch.long)
+        actions = torch.tensor(
+            actions_list, device=observations.device, dtype=torch.long
+        )
         return actions.unsqueeze(0).repeat(batch_size, 1)
 
 
@@ -201,7 +223,7 @@ class MNISTWithCHMMSensory(nn.Module):
         dropout: Dropout probability
     """
 
-    def __init__(self, n_states=81, dropout=0.5):
+    def __init__(self, n_states=81 * 3, dropout=0.5):
         super().__init__()
 
         # Conv feature extractor (same as MNISTWithCHMM)
@@ -241,7 +263,9 @@ class MNISTWithCHMMSensory(nn.Module):
         observations = self._quantize_observations(x)  # (batch, 49)
 
         # Sensory CHMM inference (vmap batched - 16.3x speedup!)
-        log_likelihood, posteriors_padded = self.chmm.forward_batch(observations)  # (batch,), (batch, T, max_block_size)
+        log_likelihood, posteriors_padded = self.chmm.forward_batch(
+            observations
+        )  # (batch,), (batch, T, max_block_size)
 
         # Convert padded posteriors to feature vectors
         # Posteriors are [batch, T, max_block_size] in probability space
@@ -255,8 +279,7 @@ class MNISTWithCHMMSensory(nn.Module):
 
         # Adaptive pool to n_states dimension for FC layers
         chmm_features = F.adaptive_avg_pool1d(
-            posteriors_flat.unsqueeze(1),
-            self.fc1.in_features
+            posteriors_flat.unsqueeze(1), self.fc1.in_features
         ).squeeze(1)
 
         # Classifier (same as MNISTWithCHMM)
@@ -309,7 +332,7 @@ class SequentialMNISTWithCHMM(nn.Module):
         self.lstm = nn.LSTM(
             input_size=max_block_size,  # State distribution per timestep
             hidden_size=lstm_hidden,
-            batch_first=True
+            batch_first=True,
         )
 
         # Classifier
@@ -333,7 +356,9 @@ class SequentialMNISTWithCHMM(nn.Module):
         actions = self._generate_actions(observations)  # (batch, 783)
 
         # CHMM inference (vmap batched - 16.3x speedup!)
-        log_likelihood, posteriors_padded = self.chmm.forward_batch(observations, actions)  # (batch,), (batch, seq_len, max_block_size)
+        log_likelihood, posteriors_padded = self.chmm.forward_batch(
+            observations, actions
+        )  # (batch,), (batch, seq_len, max_block_size)
 
         # Use posteriors directly as LSTM input (sequence of state distributions over time)
         # posteriors_padded is [batch, seq_len, max_block_size]
@@ -387,12 +412,7 @@ class LanguageModelWithCHMM(nn.Module):
     """
 
     def __init__(
-        self,
-        vocab_size,
-        embed_size=256,
-        n_states=300,
-        n_actions=4,
-        lstm_hidden=512
+        self, vocab_size, embed_size=256, n_states=300, n_actions=4, lstm_hidden=512
     ):
         super().__init__()
 
@@ -405,7 +425,7 @@ class LanguageModelWithCHMM(nn.Module):
         self.lstm = nn.LSTM(
             input_size=embed_size,  # Keep embeddings as LSTM input
             hidden_size=lstm_hidden,
-            batch_first=True
+            batch_first=True,
         )
 
         # Output
@@ -432,7 +452,9 @@ class LanguageModelWithCHMM(nn.Module):
         actions = self._generate_actions(observations)  # (batch, seq_len-1)
 
         # CHMM inference (vmap batched - 16.3x speedup!)
-        log_likelihood, _ = self.chmm.forward_batch(observations, actions)  # (batch,), (batch, seq_len, max_block_size)
+        log_likelihood, _ = self.chmm.forward_batch(
+            observations, actions
+        )  # (batch,), (batch, seq_len, max_block_size)
 
         # LSTM on embeddings (CHMM acts as regularizer via likelihood term)
         lstm_out, _ = self.lstm(embeddings)
