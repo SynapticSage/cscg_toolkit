@@ -256,7 +256,7 @@ def _update_C(
     mess_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones[observations])])
 
     # Convert T to log-space once at the start
-    log_T = jnp.log(T + 1e-45)
+    log_T = jnp.log(T + 1e-10)
 
     # Pre-compute block info (avoid Python loops and int() conversions)
     obs_list = observations.tolist()
