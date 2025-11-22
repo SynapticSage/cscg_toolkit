@@ -48,7 +48,7 @@ room = reshape(0:8, 3, 3)
 # Generate navigation sequences (4 actions: up, down, left, right)
 (a, x, room_coords) = datagen_structured_obs_room(room; length=500, seed=42)
 
-# Initialize CHMM (3 clones per cell)
+# Initialize CHMM (3 clones per observation)
 n_clones = fill(3, 9)
 chmm = CHMM(n_clones, x, a; pseudocount=1e-10)
 
@@ -68,8 +68,8 @@ plot_graph(chmm, x, a, "gridworld_graph.png")
 
 ```julia
 # Find most likely path between two states
-state_start = 5   # Clone 5 (cell 1, clone 2)
-state_goal = 20   # Clone 20 (cell 6, clone 2)
+state_start = 5   # Clone 5 (observation 1, clone 2)
+state_goal = 20   # Clone 20 (observation 6, clone 2)
 
 (actions, log_prob) = bridge(chmm, state_start, state_goal)
 println("Planned actions: $actions (log-prob: $log_prob)")

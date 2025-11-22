@@ -61,3 +61,5 @@ research/experiments/mnist/data/MNIST/raw
 research/results/logs/mnist
 
 *.pth
+research/experiments/results/logs/mnist/chmm_spatial
+.twin.local-archer.json

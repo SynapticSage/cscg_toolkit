@@ -53,9 +53,9 @@ cscg_toolkit/
 A **Cloned Hidden Markov Model** is a sparse HMM where each hidden state emits a single observation deterministically. Multiple hidden states ("clones") can emit the same observation, enabling context-dependent representations:
 
 ```
-Observations:  [cell_0, cell_1, cell_2, ...]
-                  ↓        ↓        ↓
-Hidden States: [s0,s1,s2] [s3,s4,s5] [s6,s7,s8] ...  (3 clones per cell)
+Observations:  [x_0, x_1, x_2, ...]
+                  ↓     ↓     ↓
+Hidden States: [z_0,z_1,z_2] [z_3,z_4,z_5] [z_6,z_7,z_8] ...  (3 clones per observation)
 ```
 
 **Key advantages**:

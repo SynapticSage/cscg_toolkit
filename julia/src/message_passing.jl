@@ -284,22 +284,21 @@ function forward_logspace(T_tr, Pi, n_clones, x, a; store_messages=false, epsilo
         i_inds = boundary_index_range(clone_state_loc, i)
         j_inds = boundary_index_range(clone_state_loc, j)
 
-        # Log-space matrix-vector product using logsumexp
-        log_T_block = log_T_tr[aij, j_inds, i_inds]
-        # For each j: logsumexp over i of log_T[j,i] + log_message[i]
-        log_message_new = vec([logsumexp(log_T_block[j_idx, :] .+ log_message)
-                               for j_idx in 1:length(j_inds)])
-        log_message = log_message_new
+        # Probability-space computation (actually faster for small blocks)
+        # The benefit of log-space is mainly for numerical stability, not speed
+        T_block = T_tr[aij, j_inds, i_inds]
+        message = exp.(log_message)
+        message = T_block * message
 
-        # Normalize in log-space
-        log_p_obs = logsumexp(log_message)
-        log_message .-= log_p_obs
-        log2_lik[t] = log_p_obs / log(2)
+        # Back to log-space
+        p_obs = sum(message)
+        message ./= (p_obs + epsilon)
+        log_message = log.(message .+ epsilon)
+        log2_lik[t] = log2(p_obs + epsilon)
 
         if store_messages
             t_inds = boundary_index_range(mess_loc, t)
-            # Convert back to probability space for storage
-            mess_fwd[t_inds] .= exp.(log_message)
+            mess_fwd[t_inds] .= message
         end
     end
 

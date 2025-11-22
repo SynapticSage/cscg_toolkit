@@ -18,7 +18,7 @@ def main():
     n_actions = 4
     n_clones_per_obs = 3
 
-    # Initialize CHMM (3 clones per cell)
+    # Initialize CHMM (3 clones per observation)
     n_clones = jnp.full(n_observations, n_clones_per_obs, dtype=jnp.int32)
     chmm = init_chmm(
         n_clones=n_clones,
