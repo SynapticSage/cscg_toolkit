@@ -196,6 +196,7 @@ class FixedGlobalBins(QuantizationStrategy):
         """Manually set bin boundaries."""
         assert len(bins) == self.n_bins + 1, f"Expected {self.n_bins + 1} bins, got {len(bins)}"
         self.bins = bins.to(self.bins.device)
+        self._bins_fitted = True
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         """Quantize using fixed global bins."""

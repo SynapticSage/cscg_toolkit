@@ -228,20 +228,37 @@ class MNISTWithCHMMSensory(nn.Module):
     without action conditioning. More appropriate for passive perception tasks
     like MNIST where there's no meaningful action between spatial positions.
 
-    Architecture: Conv layers → CHMM (sensory) → MLP → Softmax
+    Architecture: Conv layers -> Quantization -> CHMM (sensory) -> MLP -> Softmax
 
     Args:
         n_states: Total CHMM hidden states
         dropout: Dropout probability
+        quantization_type: Quantization strategy ('dynamic', 'fixed', 'vqvae', 'soft')
+        n_observations: Number of discrete observations (bins)
+        quantization_kwargs: Additional quantization-specific parameters
     """
 
-    def __init__(self, n_states=81 * 3, dropout=0.5):
+    def __init__(self, n_states=81 * 3, dropout=0.5,
+                 quantization_type='fixed', n_observations=9, **quantization_kwargs):
         super().__init__()
+
+        self.quantization_type = quantization_type
+        self.n_observations = n_observations
+        self.feature_dim = 64
 
         # Conv feature extractor (same as MNISTWithCHMM)
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
         self.pool = nn.MaxPool2d(2, 2)
+
+        # Quantization strategy (shared with MNISTWithCHMM)
+        quant_kwargs = {'feature_dim': self.feature_dim} if quantization_type == 'vqvae' else {}
+        quant_kwargs.update(quantization_kwargs)
+        self.quantizer = create_quantization_strategy(
+            quantization_type,
+            n_bins=n_observations,
+            **quant_kwargs
+        )
 
         # Sensory-only CHMM (no actions)
         self.chmm = TorchCHMMSensory(n_states=n_states)
@@ -272,7 +289,12 @@ class MNISTWithCHMMSensory(nn.Module):
         x = x.permute(0, 2, 1)  # (batch, 49, 64)
 
         # Quantize features to discrete observations
-        observations = self._quantize_observations(x)  # (batch, 49)
+        if self.quantization_type == 'vqvae':
+            observations, _ = self.quantizer(x)
+        elif self.quantization_type == 'soft':
+            observations, _ = self.quantizer(x)
+        else:
+            observations = self.quantizer(x)  # (batch, 49)
 
         # Sensory CHMM inference (vmap batched - 16.3x speedup!)
         log_likelihood, posteriors_padded = self.chmm.forward_batch(
@@ -301,23 +323,6 @@ class MNISTWithCHMMSensory(nn.Module):
 
         return logits, log_likelihood
 
-    def _quantize_observations(self, features):
-        """Quantize continuous features to discrete observations.
-
-        NOTE: Uses per-batch dynamic quantile binning, not the quantization
-        strategy system from quantization.py. This is simpler but non-stationary.
-        """
-        norms = torch.norm(features, dim=-1)  # (batch, seq_len)
-
-        # Bin into 9 quantiles
-        n_bins = 9
-        percentiles = torch.linspace(0, 100, n_bins + 1, device=features.device)
-        bins = torch.quantile(norms.flatten(), percentiles / 100.0)
-
-        observations = torch.searchsorted(bins, norms, right=True) - 1
-        observations = observations.clamp(0, n_bins - 1).long()
-
-        return observations
 
 
 class SequentialMNISTWithCHMM(nn.Module):

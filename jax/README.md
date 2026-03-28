@@ -294,27 +294,28 @@ pytest tests/
 
 ### Gradient Flow Verification
 
-Test that gradients flow through the JAX CHMM to its internal parameters:
+Test that gradients flow through the JAX CHMM to its internal parameters (T, Pi_x):
 
 ```python
 import torch
 from chmm_jax.pytorch_bridge import TorchCHMM
 
 chmm = TorchCHMM(n_states=9, n_actions=4)
-obs = torch.randn(10, 5, requires_grad=True)  # (T, obs_dim)
-actions = torch.randint(0, 4, (9,))  # (T-1,)
+obs = torch.tensor([0, 1, 2, 5, 4, 3, 0, 1, 2], dtype=torch.long)  # discrete observations
+actions = torch.tensor([2, 2, 1, 3, 3, 2, 2, 2], dtype=torch.long)  # T-1 actions
 
 log_lik, posteriors = chmm(obs, actions)
 loss = -log_lik
 loss.backward()
 
-# Verifies gradients reach the observation tensor.
-# NOTE: In hybrid pipelines with argmax discretization (e.g., pytorch_hybrid.py),
-# gradients do NOT flow from CHMM likelihood back through the encoder.
-# The encoder receives gradients only from the classification loss.
-# See STATUS.md "Gradient Flow Limitations" for details.
-assert obs.grad is not None, "Gradients should flow to observations"
-print("✓ Gradient flow verified (CHMM parameters)")
+# Gradients flow to CHMM's learnable parameters (transition matrix, initial dist)
+assert chmm.log_T_logits.grad is not None, "Gradients should reach T"
+assert chmm.Pi_x.grad is not None, "Gradients should reach Pi_x"
+print("Gradient flow verified (CHMM parameters T, Pi_x)")
+
+# NOTE: Observations are discrete int64 indices -- they are NOT differentiable.
+# In hybrid pipelines, the encoder receives gradients only from the task loss,
+# not from CHMM log-likelihood. See STATUS.md "Gradient Flow Limitations".
 ```
 
 ### Common Issues
