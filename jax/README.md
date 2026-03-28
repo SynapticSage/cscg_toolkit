@@ -5,7 +5,7 @@
 This directory contains a JAX implementation of Cloned Hidden Markov Models (CHMMs) and Clone-Structured Cognitive Graphs (CSCGs), designed for:
 - **High performance**: `lax.scan` for efficient forward-backward message passing
 - **PyTorch integration**: Seamless hybrid models via custom autograd.Function
-- **Gradient-based training**: End-to-end differentiable for neural network integration
+- **Gradient-based training**: CHMM parameters (T, Pi_x) are differentiable via JAX VJP; discrete observation boundary blocks encoder gradients (see STATUS.md)
 - **Numerical stability**: Log-space arithmetic, tested against Julia reference implementation
 
 ---
@@ -46,7 +46,7 @@ Without this, JAX will allocate 75-90% GPU memory, starving PyTorch.
 
 ```python
 import jax.numpy as jnp
-from chmm_jax import CHMM, forward_backward, learn_em
+from chmm_jax import init_chmm, forward_backward, learn_em
 
 # Generate gridworld data (port of Julia example)
 n_clones = jnp.array([3, 3, 3, 3, 3, 3, 3, 3, 3])  # 3 clones per observation
@@ -54,7 +54,7 @@ observations = jnp.array([0, 1, 2, 5, 4, 3, 0, 1, 2])
 actions = jnp.array([2, 2, 1, 3, 3, 2, 2, 2])  # 0=up, 1=down, 2=left, 3=right
 
 # Initialize CHMM
-chmm = CHMM(n_clones=n_clones, n_observations=9, n_actions=4, pseudocount=1e-10)
+chmm = init_chmm(n_clones=n_clones, n_observations=9, n_actions=4, pseudocount=1e-10)
 
 # Train with EM
 chmm_trained = learn_em(chmm, observations, actions, n_iter=100)
@@ -97,7 +97,7 @@ class HybridModel(nn.Module):
         # PyTorch encoder
         observations = self.encoder(x)  # (batch, T, obs_dim)
 
-        # JAX CHMM (gradients flow automatically!)
+        # JAX CHMM (gradients flow to CHMM parameters T, Pi_x)
         log_lik, posteriors = self.chmm(observations, actions)
 
         # PyTorch decoder
@@ -112,7 +112,7 @@ for batch in dataloader:
     optimizer.zero_grad()
     output, log_lik = model(batch['x'], batch['actions'])
     loss = criterion(output, batch['y']) - log_lik.mean()  # Maximize likelihood
-    loss.backward()  # Gradients through JAX module!
+    loss.backward()  # Gradients reach CHMM params (T, Pi_x) and decoder
     optimizer.step()
 
 # After training: Viterbi decoding for analysis
@@ -157,7 +157,7 @@ log_liks, posteriors = chmm.forward_batch(observations, actions)
 # log_liks.shape: (3,)
 # posteriors.shape: (3, 5, max_block_size)
 
-# Gradients flow automatically!
+# Gradients flow to CHMM parameters (T, Pi_x)
 loss = -log_liks.mean()
 loss.backward()
 ```
@@ -200,7 +200,7 @@ log_liks, posteriors = forward_backward_batch(chmm, obs_batch, acts_batch)
 ### Design Principles
 
 1. **Functional style**: Pure functions, explicit state management
-2. **`lax.scan` for all sequences**: No Python for-loops in hot paths
+2. **`lax.scan` for sequential processing**: Core forward/backward use `lax.scan`; block-info precomputation uses Python loops (see STATUS.md)
 3. **Block-structured sparse operations**: Only compute active M×M blocks
 4. **Log-space arithmetic**: Numerical stability for long sequences
 5. **Type annotations**: `jax.Array` with shape annotations for clarity
@@ -213,7 +213,7 @@ log_liks, posteriors = forward_backward_batch(chmm, obs_batch, acts_batch)
 
 - **`examples/basic_chmm.py`**: Pure JAX CHMM on gridworld
 - **`examples/pytorch_hybrid.py`**: Full hybrid PyTorch + JAX training pipeline
-- **`examples/gridworld.py`**: Port of Julia gridworld example with visualization
+- *(Planned)* **`examples/gridworld.py`**: Port of Julia gridworld example with visualization
 
 ### Running Examples
 
@@ -294,7 +294,7 @@ pytest tests/
 
 ### Gradient Flow Verification
 
-Test that gradients flow through JAX module:
+Test that gradients flow through the JAX CHMM to its internal parameters:
 
 ```python
 import torch
@@ -308,8 +308,13 @@ log_lik, posteriors = chmm(obs, actions)
 loss = -log_lik
 loss.backward()
 
+# Verifies gradients reach the observation tensor.
+# NOTE: In hybrid pipelines with argmax discretization (e.g., pytorch_hybrid.py),
+# gradients do NOT flow from CHMM likelihood back through the encoder.
+# The encoder receives gradients only from the classification loss.
+# See STATUS.md "Gradient Flow Limitations" for details.
 assert obs.grad is not None, "Gradients should flow to observations"
-print("✓ Gradient flow verified")
+print("✓ Gradient flow verified (CHMM parameters)")
 ```
 
 ### Common Issues
@@ -332,7 +337,7 @@ print("✓ Gradient flow verified")
 | Performance | ★★★★★ | ★★★★★ | ★★★ |
 | Gradients | Zygote | autograd | autograd |
 | Ecosystem | Plots, Stats | NumPyro, Optax | Huge |
-| Neural integration | - | ★★★★★ (via jax2torch) | ★★★★★ (native) |
+| Neural integration | - | ★★★ (discrete obs boundary; CHMM params only) | ★★★★★ (native) |
 
 ---
 

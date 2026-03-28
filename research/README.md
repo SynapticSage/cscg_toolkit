@@ -16,6 +16,27 @@ Systematically evaluate whether integrating Clone-Structured Cognitive Graph (CS
 
 ---
 
+## Current Status
+
+Only the MNIST experiment (Tier 1) has working code. All other experiments are planned but not yet implemented.
+
+| Experiment | Status | Location |
+|-----------|--------|----------|
+| MNIST (spatial actions) | **Implemented** | `experiments/mnist/train_chmm_spatial.py` |
+| MNIST (sensory-only) | **Implemented** | `experiments/mnist/train_chmm_sensory.py` |
+| MNIST (baseline CNN) | **Implemented** | `experiments/mnist/train_baseline.py` |
+| Sequential MNIST | Planned | `experiments/sequential_mnist/` |
+| Language Modeling | Planned | `experiments/language/` |
+| Navigation | Planned | `experiments/navigation/` |
+| Video | Planned | `experiments/video/` |
+| Time Series | Planned | `experiments/timeseries/` |
+
+The tier structure below represents the **research plan**, not current capabilities. Infrastructure directories (`trainers/`, `scripts/`, `configs/`) are also planned but empty.
+
+**Note on MNIST**: Standard MNIST is not a natural CSCG task (no inherent temporal/sequential structure). The spatial action encoding manufactures raster-scan actions over the 7x7 feature grid. The sensory-only variant is more honest about this. Navigation with real actions and aliasing would be the cleanest CSCG validation.
+
+---
+
 ## Why Focus on Sequential/Temporal Tasks?
 
 CHMM was specifically designed for sequence learning:
@@ -144,36 +165,27 @@ loss = task_loss + lambda * (-chmm_log_likelihood)
 research/
 ├── README.md                    # This file
 ├── experiments/                 # Individual experiments
-│   ├── mnist/                  # Standard MNIST
-│   ├── sequential_mnist/       # Pixel-by-pixel MNIST
-│   ├── language/               # Penn TreeBank
-│   ├── navigation/             # Gridworld/MiniGrid
-│   ├── video/                  # Action recognition
-│   └── timeseries/             # Forecasting
-├── configs/                     # Shared config templates
-├── models/                      # Network architectures
+│   ├── mnist/                  # [implemented] Standard MNIST
+│   ├── sequential_mnist/       # [planned] Pixel-by-pixel MNIST
+│   ├── language/               # [planned] Penn TreeBank
+│   ├── navigation/             # [planned] Gridworld/MiniGrid
+│   ├── video/                  # [planned] Action recognition
+│   └── timeseries/             # [planned] Forecasting
+├── configs/                     # [planned] Shared config templates
+├── models/                      # [implemented] Network architectures
 │   ├── baseline_models.py      # LSTM, CNN, etc.
-│   └── chmm_hybrid_models.py   # CHMM integrated variants
+│   ├── chmm_hybrid_models.py   # CHMM integrated variants
+│   └── quantization.py         # Discretization strategies
 ├── datasets/                    # Data loaders
-│   ├── vision.py               # MNIST, CIFAR
-│   ├── sequences.py            # Language, timeseries
-│   └── navigation.py           # Gridworld environments
-├── trainers/                    # Training loops
-│   ├── supervised.py           # Standard supervised learning
-│   └── rl.py                   # Reinforcement learning (navigation)
+│   └── vision.py               # [implemented] MNIST loader
+├── trainers/                    # [planned] Training loops
 ├── analysis/                    # Results analysis
-│   ├── notebooks/              # Jupyter notebooks
-│   ├── plots/                  # Generated figures
-│   └── visualize_chmm.py       # CHMM graph visualization
+│   └── visualize_chmm.py       # [planned] CHMM graph visualization
 ├── results/                     # Experiment outputs
 │   ├── logs/                   # TensorBoard logs
 │   ├── checkpoints/            # Saved models
-│   ├── metrics/                # CSV/JSON metrics
-│   └── figures/                # Publication-ready figures
-└── scripts/                     # Convenience scripts
-    ├── train_all.sh            # Run all experiments
-    ├── sweep_hyperparams.sh    # Grid search
-    └── compare_results.py      # Statistical analysis
+│   └── metrics/                # CSV/JSON metrics
+└── scripts/                     # [planned] Convenience scripts
 ```
 
 ---
@@ -202,17 +214,10 @@ research/
 
 ```bash
 cd research/experiments/mnist
-python train_baseline.py  # Standard CNN baseline
-python train_chmm.py      # With CHMM layer
-python evaluate.py        # Compare results
-```
-
-### Full Experiment Suite
-
-```bash
-cd research/scripts
-./train_all.sh            # Run all experiments
-./compare_results.py      # Generate comparison plots
+python train_baseline.py        # Standard CNN baseline
+python train_chmm_spatial.py    # With CHMM + spatial grid actions
+python train_chmm_sensory.py    # With CHMM, no actions
+python compare_all.py           # Compare results
 ```
 
 ---

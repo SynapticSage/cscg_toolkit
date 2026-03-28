@@ -105,18 +105,29 @@ This repository contains multiple implementations:
 
 ---
 
+## Component Maturity
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| JAX core (message passing, EM) | **Stable** | Tested against Julia reference fixtures |
+| Batched inference (vmap) | **Stable** | 10-50x speedup, tested |
+| PyTorch bridge (CHMM params) | **Stable** | Gradient flow for T, Pi_x verified |
+| Neural hybrid pipeline | **Experimental** | Discrete observation barrier; no encoder gradients from CHMM |
+| Quantization strategies | **Experimental** | FixedGlobalBins requires fit_from_encoder() call |
+| MNIST experiments | **Experimental** | Proof of concept; MNIST is not a natural CSCG task |
+| Julia implementation | **Reference** | Original implementation, all tests passing |
+| Python implementation | **Legacy** | Superseded by JAX |
+
 ## Contributing
 
 This is a research project. Contributions are welcome!
 
 **Priority areas**:
-- [ ] Gradient descent training via Flux.jl
-- [ ] GPU acceleration
-   - [ ] Pytorch 
-   - [ ] Jax
-- [ ] Performance optimizations
+- [ ] Soft-observation CHMM interface for end-to-end neural hybrid gradient flow
+- [ ] Navigation experiment (core CSCG use case with real actions and aliasing)
+- [ ] Sequential MNIST / language modeling experiments
+- [ ] GPU kernel optimization (Triton)
 - [ ] Additional test coverage
-- [ ] Documentation improvements
 
 **Workflow**:
 1. Fork the repository

@@ -36,7 +36,19 @@ from .quantization import create_quantization_strategy
 class MNISTWithCHMM(nn.Module):
     """MNIST CNN with CHMM layer for structured feature learning.
 
-    Architecture: Conv layers → Quantization → CHMM → MLP → Softmax
+    Architecture: Conv layers -> Quantization -> CHMM -> MLP -> Softmax
+
+    NOTE: This is a two-stage discrete pipeline. All quantization strategies
+    produce hard integer observations via argmax/searchsorted. The CHMM operates
+    on these discrete tokens. Gradients flow through the CHMM's internal
+    parameters (transition matrix T, Pi_x) and the decoder MLP, but NOT from
+    the CHMM back through the quantizer to the CNN encoder. The encoder is
+    trained only by the classification loss.
+
+    The SoftDiscretization strategy computes differentiable soft_probs but they
+    are currently unused -- hard argmax indices are still passed to the CHMM.
+    A soft-observation CHMM interface would be needed for true end-to-end
+    gradient flow.
 
     Args:
         n_states: Total CHMM hidden states
@@ -290,7 +302,11 @@ class MNISTWithCHMMSensory(nn.Module):
         return logits, log_likelihood
 
     def _quantize_observations(self, features):
-        """Quantize continuous features to discrete observations (same as MNISTWithCHMM)."""
+        """Quantize continuous features to discrete observations.
+
+        NOTE: Uses per-batch dynamic quantile binning, not the quantization
+        strategy system from quantization.py. This is simpler but non-stationary.
+        """
         norms = torch.norm(features, dim=-1)  # (batch, seq_len)
 
         # Bin into 9 quantiles

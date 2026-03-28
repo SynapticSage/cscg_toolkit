@@ -26,6 +26,11 @@ class HybridSequenceModel(nn.Module):
         Input (raw features) -> Encoder (PyTorch)
         -> Observations (discrete) -> CHMM (JAX)
         -> Posteriors -> Decoder (PyTorch) -> Output
+
+    NOTE: This is a two-stage discrete pipeline. The encoder produces discrete
+    observations via argmax (line ~69), so CHMM likelihood gradients do NOT
+    reach the encoder. The encoder trains only from the classification loss.
+    CHMM internal parameters (T, Pi_x) receive gradients via JAX VJP.
     """
 
     def __init__(self, input_dim: int, n_states: int, n_actions: int, output_dim: int):
@@ -65,7 +70,8 @@ class HybridSequenceModel(nn.Module):
         # Encode to observation logits
         obs_logits = self.encoder(x)  # [batch, T, n_obs]
 
-        # Get discrete observations (argmax)
+        # Get discrete observations (argmax -- non-differentiable)
+        # Gradient path from CHMM likelihood to encoder stops here.
         observations = torch.argmax(obs_logits, dim=-1)  # [batch, T]
 
         # Process each sequence in batch

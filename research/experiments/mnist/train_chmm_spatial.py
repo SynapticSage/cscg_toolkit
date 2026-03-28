@@ -194,6 +194,14 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Train MNIST with CHMM')
 
+    # Basic training args
+    parser.add_argument('--epochs', type=int, default=None,
+                        help='Number of training epochs (overrides config file)')
+    parser.add_argument('--batch-size', type=int, default=None,
+                        help='Batch size (overrides config file)')
+    parser.add_argument('--lr', type=float, default=None,
+                        help='Learning rate (overrides config file)')
+
     # Phase 1 args
     parser.add_argument('--grad-clip', type=float, default=1.0,
                         help='Gradient clipping norm (default: 1.0, set to 0 to disable)')
@@ -242,12 +250,25 @@ def main():
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
+    # Override config with CLI args if provided
+    if args.epochs is not None:
+        config['epochs'] = args.epochs
+    if args.batch_size is not None:
+        config['batch_size'] = args.batch_size
+    if args.lr is not None:
+        config['learning_rate'] = args.lr
+
     # Set seed
     torch.manual_seed(config['seed'])
 
     # Device
     device = torch.device(config['device'] if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
+    print(f'Training config:')
+    print(f'  Epochs: {config["epochs"]}')
+    print(f'  Batch size: {config["batch_size"]}')
+    print(f'  Learning rate: {config["learning_rate"]}')
+    print(f'  Weight decay: {config["weight_decay"]}')
 
     # Data
     train_loader, test_loader = get_mnist(
@@ -274,6 +295,12 @@ def main():
     print(f'  CHMM states: {config["chmm"]["n_states"]}')
     print(f'  CHMM actions: {config["chmm"]["n_actions"]} (spatial grid: right/down)')
     print(f'  Quantization: {args.quantization_type} ({args.n_observations} bins)')
+
+    # Fit quantizer bins from encoder feature statistics (required for 'fixed' strategy)
+    if args.quantization_type == 'fixed':
+        print('Fitting fixed quantizer bins from encoder feature norms...')
+        model.quantizer.fit_from_encoder(model, train_loader, device)
+
     print(f'Parameters: {sum(p.numel() for p in model.parameters()):,}')
 
     # Gradient clipping

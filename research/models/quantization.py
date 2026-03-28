@@ -108,17 +108,22 @@ class FixedGlobalBins(QuantizationStrategy):
 
     def __init__(self, n_bins: int = 9, bins: Optional[torch.Tensor] = None):
         super().__init__(n_bins)
+        self._bins_fitted = bins is not None
 
         if bins is not None:
             self.register_buffer('bins', bins)
         else:
-            # Initialize with uniform spacing [0, 1]
-            # User should call fit() or set_bins() before training
+            # Placeholder bins -- must call fit() or set_bins() before training.
+            # Default [0, 1] range will NOT match conv feature norms.
             self.register_buffer('bins', torch.linspace(0, 1, n_bins + 1))
 
     def fit(self, data_loader, max_batches: int = 100):
         """
-        Compute global bins from training data statistics.
+        Compute global bins from raw data norms.
+
+        NOTE: This computes bins from raw pixel norms, which may not match
+        the scale of encoder feature norms. Prefer fit_from_encoder() when
+        using with a model that has a feature extractor.
 
         Args:
             data_loader: PyTorch DataLoader with (data, target) batches
@@ -131,20 +136,60 @@ class FixedGlobalBins(QuantizationStrategy):
                 if i >= max_batches:
                     break
 
-                # Assume data is images (batch, C, H, W)
-                # You may need to adapt this to match your feature extraction
                 norms = torch.norm(data.flatten(start_dim=1), dim=-1)
                 all_norms.append(norms)
 
         all_norms = torch.cat(all_norms)
 
-        # Compute quantile bins
         percentiles = torch.linspace(0, 100, self.n_bins + 1)
         bins = torch.quantile(all_norms, percentiles / 100.0)
 
         self.bins = bins.to(self.bins.device)
+        self._bins_fitted = True
 
-        print(f'Fitted global bins: {bins.tolist()}')
+        print(f'Fitted global bins (raw data): {bins.tolist()}')
+        return bins
+
+    def fit_from_encoder(self, model, data_loader, device, max_batches: int = 50):
+        """
+        Compute bins from encoder feature norms (preferred for hybrid models).
+
+        Runs the model's conv layers over training data and collects feature
+        norms to set bin boundaries that match the actual quantization input.
+
+        Args:
+            model: Model with conv1, conv2, pool layers (e.g., MNISTWithCHMM)
+            data_loader: PyTorch DataLoader with (data, target) batches
+            device: torch device
+            max_batches: Maximum batches to sample
+        """
+        all_norms = []
+
+        model.eval()
+        with torch.no_grad():
+            for i, (data, _) in enumerate(data_loader):
+                if i >= max_batches:
+                    break
+                data = data.to(device)
+
+                # Run through encoder conv layers (mirrors MNISTWithCHMM.forward)
+                x = model.pool(torch.relu(model.conv1(data)))
+                x = model.pool(torch.relu(model.conv2(x)))
+                x = x.view(data.size(0), 64, -1).permute(0, 2, 1)  # (batch, 49, 64)
+
+                norms = torch.norm(x, dim=-1)  # (batch, 49)
+                all_norms.append(norms.flatten())
+
+        model.train()
+        all_norms = torch.cat(all_norms)
+
+        percentiles = torch.linspace(0, 100, self.n_bins + 1)
+        bins = torch.quantile(all_norms.cpu(), percentiles / 100.0)
+
+        self.bins = bins.to(self.bins.device)
+        self._bins_fitted = True
+
+        print(f'Fitted global bins (encoder features): {bins.tolist()}')
         return bins
 
     def set_bins(self, bins: torch.Tensor):
@@ -154,6 +199,14 @@ class FixedGlobalBins(QuantizationStrategy):
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         """Quantize using fixed global bins."""
+        if not self._bins_fitted:
+            import warnings
+            warnings.warn(
+                "FixedGlobalBins using default [0,1] placeholder bins. "
+                "Call fit_from_encoder() or set_bins() with encoder feature "
+                "statistics before training for meaningful quantization.",
+                stacklevel=2,
+            )
         norms = torch.norm(features, dim=-1)  # (batch, seq_len)
 
         # Discretize using fixed bins
