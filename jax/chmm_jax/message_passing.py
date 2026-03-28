@@ -614,3 +614,189 @@ def viterbi(
     states = state_loc[observations] + code
 
     return states, total_log_prob
+
+
+# ---------------------------------------------------------------------------
+# Soft-observation interface
+# ---------------------------------------------------------------------------
+# These functions accept continuous emission weights instead of discrete
+# observation indices. Messages are full-state vectors [n_states] (no block
+# compression), making them compatible with JAX autodiff through obs_weights.
+#
+# Naming: "obs_weights" / "log_obs_weights" rather than "probabilities" --
+# they represent encoder posterior assignments, not necessarily observation
+# likelihoods in the generative-model sense.
+# ---------------------------------------------------------------------------
+
+
+def _expand_obs_weights_to_states(
+    log_obs_weights: jax.Array,
+    n_clones: jax.Array,
+) -> jax.Array:
+    """Expand observation-level weights to per-state emission weights.
+
+    Each state s belongs to exactly one observation o(s). This maps
+    log_obs_weights[t, o] -> log_emission[t, s] = log_obs_weights[t, o(s)].
+
+    Args:
+        log_obs_weights: [T, n_obs] log emission weights per observation
+        n_clones: [n_obs] clones per observation
+
+    Returns:
+        log_emission: [T, n_states] log emission weights per state
+    """
+    # Build state-to-observation mapping: state s -> observation o(s)
+    state_to_obs = jnp.repeat(jnp.arange(len(n_clones)), n_clones)
+    # Index: log_emission[t, s] = log_obs_weights[t, state_to_obs[s]]
+    return log_obs_weights[:, state_to_obs]
+
+
+def forward_soft(
+    T: jax.Array,
+    Pi_x: jax.Array,
+    n_clones: jax.Array,
+    log_obs_weights: jax.Array,
+    actions: jax.Array,
+) -> Tuple[jax.Array, jax.Array]:
+    """Forward algorithm with soft (continuous) observation weights.
+
+    Instead of selecting one clone block per timestep, weights all states
+    by their observation's emission weight. Messages are full-state vectors.
+
+    Math: alpha_t proportional to e_t * (T[a_{t-1}] @ alpha_{t-1})
+    where e_t[s] = exp(log_obs_weights[t, o(s)])
+    and T[a] uses this codebase's (dest, source) indexing convention.
+
+    Args:
+        T: Transition matrix [n_actions, n_states, n_states]
+            Convention: T[a, dest, source] normalized along axis=2 (source)
+        Pi_x: Initial state distribution [n_states]
+        n_clones: Clones per observation [n_obs]
+        log_obs_weights: [T_len, n_obs] log emission weights (not necessarily
+            normalized; any real-valued tensor from an encoder)
+        actions: Action sequence [T_len - 1] (int32)
+
+    Returns:
+        log_likelihoods: Per-timestep log normalizers [T_len]
+        log_alpha: Forward messages [T_len, n_states] (log-normalized)
+    """
+    n_states = int(jnp.sum(n_clones))
+    T_len = log_obs_weights.shape[0]
+
+    # Expand obs weights to state-level emission weights [T, n_states]
+    log_emission = _expand_obs_weights_to_states(log_obs_weights, n_clones)
+
+    # Work in log-space throughout
+    log_T = jnp.log(T + 1e-10)  # [n_actions, n_states, n_states]
+    log_Pi_x = jnp.log(Pi_x + 1e-10)  # [n_states]
+
+    # Initialize: alpha_0 = e_0 * Pi_x (in log space: add)
+    log_alpha_0 = log_Pi_x + log_emission[0]
+    log_lik_0 = logsumexp(log_alpha_0)
+    log_alpha_0 = log_alpha_0 - log_lik_0  # normalize
+
+    if T_len == 1:
+        return jnp.array([log_lik_0]), log_alpha_0[None, :]
+
+    # Scan step: alpha_t = e_t * (T[a] @ alpha_{t-1})
+    def scan_step(log_alpha_prev, inputs):
+        a_t, log_e_t = inputs
+
+        # Transition: log(T[a] @ exp(log_alpha_prev))
+        # T[a][j, i] indexed as (dest, source) in this codebase's convention.
+        # Matches the hard forward: block = T[a, j_start:, i_start:]
+        log_transition = logsumexp(
+            log_T[a_t] + log_alpha_prev[None, :],  # [n_states, n_states] broadcast
+            axis=1,  # sum over source states (columns)
+        )  # [n_states]
+
+        # Apply emission weights
+        log_alpha_new = log_transition + log_e_t
+
+        # Normalize
+        log_lik_t = logsumexp(log_alpha_new)
+        log_alpha_new = log_alpha_new - log_lik_t
+
+        return log_alpha_new, (log_lik_t, log_alpha_new)
+
+    # Inputs for timesteps 1..T-1
+    scan_inputs = (actions, log_emission[1:])
+
+    _, (log_liks_rest, log_alphas_rest) = lax.scan(
+        scan_step, log_alpha_0, scan_inputs
+    )
+
+    log_likelihoods = jnp.concatenate([jnp.array([log_lik_0]), log_liks_rest])
+    log_alpha = jnp.concatenate([log_alpha_0[None, :], log_alphas_rest], axis=0)
+
+    return log_likelihoods, log_alpha
+
+
+def backward_soft(
+    T: jax.Array,
+    n_clones: jax.Array,
+    log_obs_weights: jax.Array,
+    actions: jax.Array,
+) -> jax.Array:
+    """Backward algorithm with soft (continuous) observation weights.
+
+    Full-state backward messages. No block compression.
+
+    Math: beta_t = T[a_t] @ (e_{t+1} * beta_{t+1})
+
+    Args:
+        T: Transition matrix [n_actions, n_states, n_states]
+        n_clones: Clones per observation [n_obs]
+        log_obs_weights: [T_len, n_obs] log emission weights
+        actions: Action sequence [T_len - 1]
+
+    Returns:
+        log_beta: Backward messages [T_len, n_states] (log-normalized)
+    """
+    n_states = int(jnp.sum(n_clones))
+    T_len = log_obs_weights.shape[0]
+
+    log_emission = _expand_obs_weights_to_states(log_obs_weights, n_clones)
+
+    log_T = jnp.log(T + 1e-10)
+
+    # Initialize: beta_T = uniform (log(1/n_states))
+    log_beta_T = jnp.full(n_states, -jnp.log(n_states))
+
+    if T_len == 1:
+        return log_beta_T[None, :]
+
+    # Scan step (running backward): beta_t = T[a_t] @ (e_{t+1} * beta_{t+1})
+    def scan_step(log_beta_next, inputs):
+        a_t, log_e_next = inputs
+
+        # Weight next beta by emission
+        log_weighted = log_beta_next + log_e_next  # [n_states]
+
+        # Transition: sum_j T[a,i,j] * weighted_beta[j] for each i
+        # T[a,i,j] = P(j|i,a), we want sum_j for each i
+        log_beta_curr = logsumexp(
+            log_T[a_t] + log_weighted[None, :],  # [n_states, n_states] broadcast
+            axis=1,  # sum over destination states j
+        )  # [n_states]
+
+        # Normalize
+        log_norm = logsumexp(log_beta_curr)
+        log_beta_curr = log_beta_curr - log_norm
+
+        return log_beta_curr, log_beta_curr
+
+    # Reverse: process from T-1 down to 0
+    # Inputs are (action_t, emission_{t+1}) for t = T-2, T-3, ..., 0
+    scan_inputs = (
+        jnp.flip(actions, axis=0),         # actions reversed
+        jnp.flip(log_emission[1:], axis=0), # emissions[1:] reversed
+    )
+
+    _, log_betas_reversed = lax.scan(scan_step, log_beta_T, scan_inputs)
+
+    # Reverse back to forward order and append beta_T
+    log_betas_body = jnp.flip(log_betas_reversed, axis=0)  # [T-1, n_states]
+    log_beta = jnp.concatenate([log_betas_body, log_beta_T[None, :]], axis=0)
+
+    return log_beta

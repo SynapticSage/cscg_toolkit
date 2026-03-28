@@ -12,7 +12,7 @@ from jax import random, lax
 from jax.scipy.special import logsumexp
 import numpy as np
 
-from .message_passing import forward, backward
+from .message_passing import forward, backward, forward_soft, backward_soft
 from .utils import validate_sequence
 
 
@@ -165,6 +165,53 @@ def forward_backward(
     log_likelihood = jnp.sum(log_lik_fwd)
 
     return log_likelihood, gamma
+
+
+def forward_backward_soft(
+    chmm: CHMM,
+    log_obs_weights: jax.Array,
+    actions: jax.Array,
+) -> Tuple[float, jax.Array]:
+    """Forward-backward with soft observation weights (differentiable).
+
+    Accepts continuous log emission weights instead of discrete observation
+    indices. Messages are full-state vectors [n_states], enabling gradient
+    flow from the log-likelihood through log_obs_weights to an upstream
+    encoder.
+
+    Use this for end-to-end differentiable hybrid training. For EM/Viterbi
+    with discrete observations, use forward_backward() instead.
+
+    Args:
+        chmm: CHMM model
+        log_obs_weights: [T, n_obs] log emission weights per observation.
+            These are encoder posterior assignments (any real values),
+            not necessarily log-probabilities.
+        actions: Action sequence [T-1] (int32)
+
+    Returns:
+        log_likelihood: Total log P(sequence)
+        posteriors: Full-state posterior probabilities [T, n_states]
+    """
+    log_lik_fwd, log_alpha = forward_soft(
+        chmm.T, chmm.Pi_x, chmm.n_clones,
+        log_obs_weights, actions,
+    )
+
+    log_beta = backward_soft(
+        chmm.T, chmm.n_clones,
+        log_obs_weights, actions,
+    )
+
+    # Posteriors: gamma_t = alpha_t * beta_t (add in log space, then normalize)
+    log_gamma = log_alpha + log_beta
+    # Normalize per timestep
+    log_gamma = log_gamma - logsumexp(log_gamma, axis=1, keepdims=True)
+    posteriors = jnp.exp(log_gamma)
+
+    log_likelihood = jnp.sum(log_lik_fwd)
+
+    return log_likelihood, posteriors
 
 
 def _em_step(

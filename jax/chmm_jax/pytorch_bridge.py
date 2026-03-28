@@ -17,7 +17,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .core import CHMM, init_chmm, forward_backward
+from .core import CHMM, init_chmm, forward_backward, forward_backward_soft
 from .message_passing import viterbi
 from .batching import forward_batch, forward_backward_batch
 
@@ -194,6 +194,75 @@ class JAXFunctionBatch(torch.autograd.Function):
         return grad_T, grad_Pi_x, None, None, None
 
 
+class JAXFunctionSoft(torch.autograd.Function):
+    """Custom autograd function for soft-observation CHMM.
+
+    Differentiates through (T, Pi_x, log_obs_weights) -- enabling gradient
+    flow from the CHMM log-likelihood back to the encoder that produces
+    observation weights.
+    """
+
+    @staticmethod
+    def forward(ctx, T_torch, Pi_x_torch, log_obs_weights_torch, chmm, actions_jax):
+        """Forward pass with soft observation weights.
+
+        Args:
+            ctx: PyTorch autograd context
+            T_torch: Transition matrix (PyTorch tensor, requires_grad)
+            Pi_x_torch: Initial state distribution (PyTorch tensor, requires_grad)
+            log_obs_weights_torch: [T, n_obs] log emission weights (requires_grad)
+            chmm: Base CHMM (for structure info, not differentiable)
+            actions_jax: Action sequence (JAX array, not differentiable)
+
+        Returns:
+            log_likelihood, posteriors [T, n_states] (as PyTorch tensors)
+        """
+        T_jax = jnp.array(T_torch.detach().cpu().numpy())
+        Pi_x_jax = jnp.array(Pi_x_torch.detach().cpu().numpy())
+        log_w_jax = jnp.array(log_obs_weights_torch.detach().cpu().numpy())
+
+        chmm_current = chmm._replace(T=T_jax, Pi_x=Pi_x_jax)
+
+        # Differentiate through T, Pi_x, AND log_obs_weights
+        def jax_fn(T, Pi_x, log_w):
+            chmm_temp = chmm._replace(T=T, Pi_x=Pi_x)
+            log_lik, posteriors = forward_backward_soft(chmm_temp, log_w, actions_jax)
+            return log_lik, posteriors
+
+        (log_lik, posteriors), vjp_fn = jax.vjp(jax_fn, T_jax, Pi_x_jax, log_w_jax)
+
+        ctx.vjp_fn = vjp_fn
+        ctx.save_for_backward(T_torch, Pi_x_torch, log_obs_weights_torch)
+
+        log_lik_torch = torch.from_numpy(np.array(log_lik)).float()
+        posteriors_torch = torch.from_numpy(np.array(posteriors)).float()
+
+        log_lik_torch.requires_grad = (
+            T_torch.requires_grad or Pi_x_torch.requires_grad
+            or log_obs_weights_torch.requires_grad
+        )
+
+        return log_lik_torch, posteriors_torch
+
+    @staticmethod
+    def backward(ctx, grad_log_lik, grad_posteriors):
+        """Backward: gradients flow to T, Pi_x, AND log_obs_weights."""
+        T_torch, Pi_x_torch, log_w_torch = ctx.saved_tensors
+
+        grad_log_lik_jax = jnp.array(grad_log_lik.cpu().numpy())
+        grad_posteriors_jax = jnp.array(grad_posteriors.cpu().numpy())
+
+        grad_T_jax, grad_Pi_x_jax, grad_w_jax = ctx.vjp_fn(
+            (grad_log_lik_jax, grad_posteriors_jax)
+        )
+
+        grad_T = torch.from_numpy(np.array(grad_T_jax)).float() if T_torch.requires_grad else None
+        grad_Pi_x = torch.from_numpy(np.array(grad_Pi_x_jax)).float() if Pi_x_torch.requires_grad else None
+        grad_w = torch.from_numpy(np.array(grad_w_jax)).float() if log_w_torch.requires_grad else None
+
+        return grad_T, grad_Pi_x, grad_w, None, None
+
+
 class TorchCHMM(nn.Module):
     """PyTorch wrapper for JAX CHMM.
 
@@ -293,6 +362,39 @@ class TorchCHMM(nn.Module):
             self.chmm,
             obs_jax,
             actions_jax
+        )
+
+        return log_lik, posteriors
+
+    def forward_soft(
+        self,
+        log_obs_weights: torch.Tensor,
+        actions: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass with soft observation weights (end-to-end differentiable).
+
+        Unlike forward(), gradients flow through log_obs_weights back to the
+        encoder. This enables true end-to-end training of encoder -> CHMM -> decoder.
+
+        Args:
+            log_obs_weights: [T, n_obs] log emission weights from encoder
+                (any real values; not required to be log-probabilities)
+            actions: Action sequence [T-1] (int64)
+
+        Returns:
+            log_likelihood: Log P(sequence | weights)
+            posteriors: Full-state posterior probabilities [T, n_states]
+        """
+        T = torch.softmax(self.log_T_logits, dim=-1)
+
+        actions_jax = jnp.array(actions.detach().cpu().numpy(), dtype=jnp.int32)
+
+        log_lik, posteriors = JAXFunctionSoft.apply(
+            T,
+            self.Pi_x,
+            log_obs_weights,
+            self.chmm,
+            actions_jax,
         )
 
         return log_lik, posteriors

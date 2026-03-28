@@ -5,8 +5,8 @@ Efficient implementation of CHMMs/CSCGs using JAX with lax.scan for sequential m
 Created: 2025-11-03
 """
 
-from .core import CHMM, init_chmm, forward_backward, learn_em
-from .message_passing import forward, backward, viterbi
+from .core import CHMM, init_chmm, forward_backward, forward_backward_soft, learn_em
+from .message_passing import forward, backward, forward_soft, backward_soft, viterbi
 from .utils import validate_sequence, log_normalize
 from .pytorch_bridge import TorchCHMM, TorchCHMMSensory, TorchCHMMFromPretrained
 
@@ -17,9 +17,12 @@ __all__ = [
     "CHMM",
     "init_chmm",
     "forward_backward",
+    "forward_backward_soft",
     "learn_em",
     "forward",
     "backward",
+    "forward_soft",
+    "backward_soft",
     "viterbi",
     "validate_sequence",
     "log_normalize",
