@@ -18,7 +18,7 @@ import jax.numpy as jnp
 from jax import lax
 from jax.scipy.special import logsumexp
 
-from .core import CHMM
+from .core import CHMM, forward_backward_soft
 
 
 def forward_vmap(
@@ -412,3 +412,44 @@ def _forward_backward_single(
     gamma = jnp.exp(log_gamma_normalized)
 
     return total_log_lik, gamma
+
+
+def forward_backward_soft_batch(
+    chmm: CHMM,
+    log_obs_weights: jax.Array,
+    actions: jax.Array,
+) -> Tuple[jax.Array, jax.Array]:
+    """Batched forward-backward with soft observations via vmap.
+
+    Processes multiple sequences in parallel. All sequences must be the
+    same length. Gradients flow through log_obs_weights for end-to-end
+    differentiable training.
+
+    Args:
+        chmm: CHMM model
+        log_obs_weights: [B, T, n_obs] log emission weights from encoder
+        actions: [B, T-1] batched action sequences, OR [T-1] shared actions
+            (broadcast to all sequences in the batch)
+
+    Returns:
+        log_likelihoods: [B] total log P per sequence
+        posteriors: [B, T, n_states] smoothed posteriors (probability space)
+    """
+    n_obs = chmm.n_observations
+    assert log_obs_weights.shape[-1] == n_obs, (
+        f"log_obs_weights last dim ({log_obs_weights.shape[-1]}) "
+        f"!= chmm.n_observations ({n_obs})"
+    )
+
+    # Support shared actions [T-1] by broadcasting to [B, T-1]
+    if actions.ndim == 1:
+        actions = jnp.broadcast_to(actions[None, :], (log_obs_weights.shape[0], actions.shape[0]))
+
+    # Vmap forward_backward_soft over batch dimension.
+    # Close over chmm (NamedTuple) -- vmap only maps the array arguments.
+    batched_fn = jax.vmap(
+        lambda log_w, acts: forward_backward_soft(chmm, log_w, acts),
+        in_axes=(0, 0),
+    )
+
+    return batched_fn(log_obs_weights, actions)

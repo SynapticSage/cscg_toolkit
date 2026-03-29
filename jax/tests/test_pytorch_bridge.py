@@ -356,5 +356,45 @@ def test_forward_soft_encoder_gradient_flow():
     assert torch.all(torch.isfinite(posteriors))
 
 
+def test_forward_soft_batch_encoder_gradient_flow():
+    """Batched soft path: encoder -> forward_soft_batch -> loss -> all grads.
+
+    Asserts all three gradient paths: encoder, log_T_logits, Pi_x.
+    """
+    import torch.nn as nn
+
+    encoder = nn.Linear(16, 9)  # 9 observations
+    chmm = TorchCHMM(n_states=27, n_actions=4, seed=42)
+
+    B, T_len = 4, 5
+    x = torch.randn(B, T_len, 16, requires_grad=True)
+    actions = torch.randint(0, 4, (T_len - 1,))  # shared [T-1]
+
+    # Encoder produces batched soft observation weights
+    log_obs_weights = encoder(x)  # [B, T, 9]
+    log_liks, posteriors = chmm.forward_soft_batch(log_obs_weights, actions)
+
+    loss = -log_liks.sum()
+    loss.backward()
+
+    # Encoder gradients
+    assert encoder.weight.grad is not None, "Encoder weight should have gradients"
+    assert torch.any(encoder.weight.grad != 0), "Encoder gradients should be non-zero"
+    assert torch.all(torch.isfinite(encoder.weight.grad)), "Encoder gradients should be finite"
+
+    # CHMM parameter gradients
+    assert chmm.log_T_logits.grad is not None, "log_T_logits should have gradients"
+    assert torch.all(torch.isfinite(chmm.log_T_logits.grad)), "T gradients should be finite"
+    assert chmm.Pi_x.grad is not None, "Pi_x should have gradients"
+    assert torch.all(torch.isfinite(chmm.Pi_x.grad)), "Pi_x gradients should be finite"
+
+    # Input gradients
+    assert x.grad is not None, "Input x should have gradients"
+
+    # Output shapes
+    assert log_liks.shape == (B,)
+    assert posteriors.shape == (B, T_len, 27)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

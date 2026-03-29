@@ -193,6 +193,11 @@ def forward_backward_soft(
         log_likelihood: Total log P(sequence)
         posteriors: Full-state posterior probabilities [T, n_states]
     """
+    assert log_obs_weights.shape[-1] == chmm.n_observations, (
+        f"log_obs_weights last dim ({log_obs_weights.shape[-1]}) "
+        f"!= chmm.n_observations ({chmm.n_observations})"
+    )
+
     log_lik_fwd, log_alpha = forward_soft(
         chmm.T, chmm.Pi_x, chmm.n_clones,
         log_obs_weights, actions,

@@ -82,7 +82,8 @@ class MNISTWithCHMM(nn.Module):
         )
 
         # CHMM layer (n_observations with n_states/n_observations clones each)
-        self.chmm = TorchCHMM(n_states=n_states, n_actions=n_actions)
+        self.chmm = TorchCHMM(n_states=n_states, n_actions=n_actions,
+                              n_observations=n_observations)
 
         # Classifier on CHMM posteriors
         self.fc1 = nn.Linear(n_states, 128)
@@ -261,7 +262,8 @@ class MNISTWithCHMMSensory(nn.Module):
         )
 
         # Sensory-only CHMM (no actions)
-        self.chmm = TorchCHMMSensory(n_states=n_states)
+        self.chmm = TorchCHMMSensory(n_states=n_states,
+                                     n_observations=n_observations)
 
         # Classifier on CHMM posteriors (same as MNISTWithCHMM)
         self.fc1 = nn.Linear(n_states, 128)
@@ -356,7 +358,8 @@ class MNISTWithCHMMSoft(nn.Module):
         self.obs_head = nn.Linear(64, n_observations)
 
         # CHMM (uses forward_soft for gradient flow)
-        self.chmm = TorchCHMM(n_states=n_states, n_actions=n_actions)
+        self.chmm = TorchCHMM(n_states=n_states, n_actions=n_actions,
+                              n_observations=n_observations)
 
         # Classifier on full-state posteriors
         self.fc1 = nn.Linear(n_states, 128)
@@ -404,19 +407,12 @@ class MNISTWithCHMMSoft(nn.Module):
         # Spatial actions
         actions = self._get_actions(49, x.device)  # (48,)
 
-        # CHMM inference per sequence (soft path -- no vmap yet)
-        log_liks = []
-        all_posteriors = []
-        for i in range(batch_size):
-            log_lik, posteriors = self.chmm.forward_soft(
-                log_obs_weights[i],  # [49, n_obs]
-                actions,             # [48]
-            )
-            log_liks.append(log_lik)
-            all_posteriors.append(posteriors)  # [49, n_states]
-
-        log_likelihood = torch.stack(log_liks)        # [batch]
-        posteriors = torch.stack(all_posteriors)        # [batch, 49, n_states]
+        # CHMM inference (batched soft path via vmap)
+        # Shared actions [T-1] broadcast internally to [B, T-1]
+        log_likelihood, posteriors = self.chmm.forward_soft_batch(
+            log_obs_weights,  # [batch, 49, n_obs]
+            actions,          # [48] shared across batch
+        )  # [batch], [batch, 49, n_states]
 
         # Pool posteriors and classify
         chmm_features = posteriors.mean(dim=1)  # [batch, n_states]
@@ -449,7 +445,8 @@ class SequentialMNISTWithCHMM(nn.Module):
         max_block_size = n_states // n_observations
 
         # CHMM layer
-        self.chmm = TorchCHMM(n_states=n_states, n_actions=n_actions)
+        self.chmm = TorchCHMM(n_states=n_states, n_actions=n_actions,
+                              n_observations=n_observations)
 
         # LSTM on CHMM posteriors (now takes state distributions as input)
         self.lstm = nn.LSTM(
@@ -524,7 +521,14 @@ class SequentialMNISTWithCHMM(nn.Module):
 class LanguageModelWithCHMM(nn.Module):
     """Language model with CHMM layer before LSTM.
 
-    Architecture: Embedding → CHMM → LSTM → Output
+    Architecture: Embedding -> CHMM -> LSTM -> Output
+
+    NOTE: This model is currently broken. It uses raw token ids as observations
+    (line ~571), so n_observations should equal vocab_size. But n_states must be
+    divisible by n_observations with n_states >= n_observations, which is
+    infeasible for real vocabularies (e.g., vocab_size=10000 with n_states=300).
+    The CHMM topology needs a design rethink -- either quantize embeddings
+    to a small observation set, or use a much larger n_states.
 
     Args:
         vocab_size: Vocabulary size
@@ -542,6 +546,8 @@ class LanguageModelWithCHMM(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embed_size)
 
         # CHMM layer
+        # BUG: n_observations defaults to n_states//3 = 100, but observations
+        # are raw token ids in [0, vocab_size). This is a design mismatch.
         self.chmm = TorchCHMM(n_states=n_states, n_actions=n_actions)
 
         # LSTM on CHMM posteriors

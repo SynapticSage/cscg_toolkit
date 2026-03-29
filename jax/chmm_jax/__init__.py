@@ -6,6 +6,7 @@ Created: 2025-11-03
 """
 
 from .core import CHMM, init_chmm, forward_backward, forward_backward_soft, learn_em
+from .batching import forward_backward_soft_batch
 from .message_passing import forward, backward, forward_soft, backward_soft, viterbi
 from .utils import validate_sequence, log_normalize
 from .pytorch_bridge import TorchCHMM, TorchCHMMSensory, TorchCHMMFromPretrained
@@ -18,6 +19,7 @@ __all__ = [
     "init_chmm",
     "forward_backward",
     "forward_backward_soft",
+    "forward_backward_soft_batch",
     "learn_em",
     "forward",
     "backward",

@@ -7,12 +7,15 @@ Verifies:
 3. Soft weights produce valid posteriors
 """
 
+import time
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from chmm_jax import init_chmm, forward_backward, forward_backward_soft
+from chmm_jax.batching import forward_backward_soft_batch
 from chmm_jax.message_passing import forward_soft, backward_soft
 
 
@@ -202,3 +205,119 @@ class TestSoftWeights:
 
         assert jnp.isfinite(ll)
         assert posteriors.shape == (1, chmm_small.n_states)
+
+
+class TestBatchedSoftObservations:
+    """Tests for forward_backward_soft_batch (vmap)."""
+
+    def test_shapes(self, chmm_small):
+        """Output shapes: [B], [B, T, n_states]."""
+        B, T_len, n_obs = 4, 7, 9
+        log_w = jnp.zeros((B, T_len, n_obs))
+        actions = jnp.zeros((B, T_len - 1), dtype=jnp.int32)
+
+        log_liks, posteriors = forward_backward_soft_batch(chmm_small, log_w, actions)
+
+        assert log_liks.shape == (B,)
+        assert posteriors.shape == (B, T_len, chmm_small.n_states)
+        assert jnp.all(jnp.isfinite(log_liks))
+
+    def test_shared_actions_broadcast(self, chmm_small):
+        """Shared actions [T-1] should broadcast to [B, T-1]."""
+        B, T_len, n_obs = 3, 5, 9
+        log_w = jnp.zeros((B, T_len, n_obs))
+        actions_shared = jnp.array([0, 1, 0, 1], dtype=jnp.int32)  # [T-1]
+
+        log_liks, posteriors = forward_backward_soft_batch(chmm_small, log_w, actions_shared)
+
+        assert log_liks.shape == (B,)
+        assert posteriors.shape == (B, T_len, chmm_small.n_states)
+
+    def test_batch_vs_single(self, chmm_small, sequence):
+        """Batched results should match individual forward_backward_soft calls."""
+        obs, actions = sequence
+        n_obs = 9
+
+        # Create 3 different soft weight sequences
+        key = jax.random.PRNGKey(42)
+        log_w_batch = jax.random.normal(key, (3, len(obs), n_obs))
+        actions_batch = jnp.stack([actions, actions, actions])
+
+        # Batched
+        log_liks_batch, post_batch = forward_backward_soft_batch(
+            chmm_small, log_w_batch, actions_batch
+        )
+
+        # Single-sequence loop
+        for i in range(3):
+            ll_single, post_single = forward_backward_soft(
+                chmm_small, log_w_batch[i], actions
+            )
+            np.testing.assert_allclose(
+                float(log_liks_batch[i]), float(ll_single), rtol=1e-4,
+                err_msg=f"Log-likelihood mismatch at sequence {i}",
+            )
+            np.testing.assert_allclose(
+                np.array(post_batch[i]), np.array(post_single), atol=1e-4,
+                err_msg=f"Posteriors mismatch at sequence {i}",
+            )
+
+    def test_batch_gradients(self, chmm_small, sequence):
+        """Gradients through batched path."""
+        _, actions = sequence
+        n_obs = 9
+        key = jax.random.PRNGKey(99)
+        log_w = jax.random.normal(key, (4, len(actions) + 1, n_obs))
+        actions_batch = jnp.stack([actions] * 4)
+
+        def loss_fn(log_w):
+            ll, _ = forward_backward_soft_batch(chmm_small, log_w, actions_batch)
+            return -jnp.sum(ll)
+
+        grads = jax.grad(loss_fn)(log_w)
+        assert grads.shape == log_w.shape
+        assert jnp.all(jnp.isfinite(grads))
+        assert jnp.any(jnp.abs(grads) > 0)
+
+    def test_speedup_vs_loop(self, chmm_small, sequence):
+        """Batched path should be faster than Python loop (performance regression)."""
+        _, actions = sequence
+        n_obs = 9
+        B = 32
+        key = jax.random.PRNGKey(77)
+        log_w = jax.random.normal(key, (B, len(actions) + 1, n_obs))
+        actions_batch = jnp.stack([actions] * B)
+
+        # Warmup JIT
+        forward_backward_soft_batch(chmm_small, log_w, actions_batch)
+
+        # Benchmark batched
+        t0 = time.time()
+        for _ in range(3):
+            forward_backward_soft_batch(chmm_small, log_w, actions_batch)
+        batch_time = (time.time() - t0) / 3
+
+        # Benchmark loop
+        # Warmup
+        forward_backward_soft(chmm_small, log_w[0], actions)
+
+        t0 = time.time()
+        for _ in range(3):
+            for i in range(B):
+                forward_backward_soft(chmm_small, log_w[i], actions)
+        loop_time = (time.time() - t0) / 3
+
+        speedup = loop_time / max(batch_time, 1e-6)
+        print(f"\n  Soft batch speedup: {speedup:.1f}x "
+              f"(batch={batch_time:.3f}s, loop={loop_time:.3f}s, B={B})")
+
+        # Should be at least 2x faster (conservative; expect 10x+)
+        assert speedup > 2.0, f"Expected >2x speedup, got {speedup:.1f}x"
+
+    def test_n_obs_assertion(self, chmm_small):
+        """Wrong n_obs dimension should raise AssertionError."""
+        log_w = jnp.zeros((2, 5, 7))  # n_obs=7, but chmm expects 9
+        actions = jnp.zeros((2, 4), dtype=jnp.int32)
+
+        with pytest.raises(AssertionError, match="n_observations"):
+            forward_backward_soft_batch(chmm_small, log_w, actions)
