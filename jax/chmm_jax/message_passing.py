@@ -645,8 +645,16 @@ def _expand_obs_weights_to_states(
     Returns:
         log_emission: [T, n_states] log emission weights per state
     """
+    n_obs_weights = log_obs_weights.shape[-1]
+    n_obs_chmm = len(n_clones)
+    if n_obs_weights != n_obs_chmm:
+        raise ValueError(
+            f"log_obs_weights has {n_obs_weights} observations but n_clones "
+            f"has {n_obs_chmm} entries. These must match."
+        )
+
     # Build state-to-observation mapping: state s -> observation o(s)
-    state_to_obs = jnp.repeat(jnp.arange(len(n_clones)), n_clones)
+    state_to_obs = jnp.repeat(jnp.arange(n_obs_chmm), n_clones)
     # Index: log_emission[t, s] = log_obs_weights[t, state_to_obs[s]]
     return log_obs_weights[:, state_to_obs]
 

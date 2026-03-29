@@ -113,7 +113,7 @@ This repository contains multiple implementations:
 | Batched inference (vmap) | **Stable** | 10-50x speedup, tested |
 | PyTorch bridge (CHMM params) | **Stable** | Gradient flow for T, Pi_x verified |
 | Soft-observation interface | **New** | `forward_backward_soft()` enables encoder gradients via `TorchCHMM.forward_soft()` (single-sequence; batched soft not yet available) |
-| Neural hybrid experiments | **Experimental** | Hard discrete path used in MNIST models; soft path not yet integrated into training scripts |
+| Neural hybrid experiments | **Experimental** | MNIST models use hard discrete and soft paths; soft path needs batched vmap for practical speed |
 | Quantization strategies | **Experimental** | FixedGlobalBins requires fit_from_encoder() call |
 | MNIST experiments | **Experimental** | Proof of concept; MNIST is not a natural CSCG task |
 | Julia implementation | **Reference** | Original implementation, all tests passing |

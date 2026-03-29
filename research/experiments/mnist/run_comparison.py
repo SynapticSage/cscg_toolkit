@@ -45,7 +45,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device,
                     chmm_weight=0.1, max_batches=None):
     """Train one epoch. Returns (loss, accuracy)."""
     model.train()
-    total_loss, correct, total = 0.0, 0, 0
+    total_loss, correct, total, n_steps = 0.0, 0, 0, 0
 
     for batch_idx, (data, target) in enumerate(loader):
         if max_batches is not None and batch_idx >= max_batches:
@@ -71,13 +71,14 @@ def train_one_epoch(model, loader, optimizer, criterion, device,
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
+        n_steps += 1
 
         total_loss += loss.item()
         pred = logits.argmax(dim=1)
         correct += pred.eq(target).sum().item()
         total += target.size(0)
 
-    return total_loss / max(len(loader), 1), 100.0 * correct / max(total, 1)
+    return total_loss / max(n_steps, 1), 100.0 * correct / max(total, 1)
 
 
 @torch.no_grad()
