@@ -112,7 +112,8 @@ This repository contains multiple implementations:
 | JAX core (message passing, EM) | **Stable** | Tested against Julia reference fixtures |
 | Batched inference (vmap) | **Stable** | 10-50x speedup, tested |
 | PyTorch bridge (CHMM params) | **Stable** | Gradient flow for T, Pi_x verified |
-| Neural hybrid pipeline | **Experimental** | Discrete observation barrier; no encoder gradients from CHMM |
+| Soft-observation interface | **New** | `forward_backward_soft()` enables encoder gradients via `TorchCHMM.forward_soft()` (single-sequence; batched soft not yet available) |
+| Neural hybrid experiments | **Experimental** | Hard discrete path used in MNIST models; soft path not yet integrated into training scripts |
 | Quantization strategies | **Experimental** | FixedGlobalBins requires fit_from_encoder() call |
 | MNIST experiments | **Experimental** | Proof of concept; MNIST is not a natural CSCG task |
 | Julia implementation | **Reference** | Original implementation, all tests passing |
@@ -123,7 +124,8 @@ This repository contains multiple implementations:
 This is a research project. Contributions are welcome!
 
 **Priority areas**:
-- [ ] Soft-observation CHMM interface for end-to-end neural hybrid gradient flow
+- [x] Soft-observation CHMM interface (`forward_backward_soft`, `TorchCHMM.forward_soft`)
+- [ ] Batched soft-observation path (vmap over `forward_soft`)
 - [ ] Navigation experiment (core CSCG use case with real actions and aliasing)
 - [ ] Sequential MNIST / language modeling experiments
 - [ ] GPU kernel optimization (Triton)

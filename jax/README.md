@@ -5,7 +5,7 @@
 This directory contains a JAX implementation of Cloned Hidden Markov Models (CHMMs) and Clone-Structured Cognitive Graphs (CSCGs), designed for:
 - **High performance**: `lax.scan` for efficient forward-backward message passing
 - **PyTorch integration**: Seamless hybrid models via custom autograd.Function
-- **Gradient-based training**: CHMM parameters (T, Pi_x) are differentiable via JAX VJP; discrete observation boundary blocks encoder gradients (see STATUS.md)
+- **Gradient-based training**: CHMM parameters (T, Pi_x) differentiable via VJP; soft-observation interface (`forward_backward_soft`) enables end-to-end encoder gradients
 - **Numerical stability**: Log-space arithmetic, tested against Julia reference implementation
 
 ---

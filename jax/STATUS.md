@@ -78,35 +78,44 @@ Initial implementation of Clone-Structured Cognitive Graphs (CSCG/CHMM) in JAX w
 - `log_normalize()` and logsumexp used in forward/backward passes
 - Tested against Julia reference fixtures
 
-### Gradient Flow Limitations
+### Gradient Flow
 
-- CHMM internal parameters (T, Pi_x) receive gradients via JAX VJP through `pytorch_bridge.py`
-- Gradients do **NOT** propagate from CHMM likelihood through discrete observations back to upstream encoders
-- The `argmax` discretization in `pytorch_hybrid.py` and `searchsorted` in quantization strategies are non-differentiable barriers
-- `SoftDiscretization` in `research/models/quantization.py` computes differentiable `soft_probs`, but no CHMM code consumes them
-- TODO: Implement soft-observation CHMM interface for true end-to-end gradient flow
+Two paths available:
+
+**Hard (discrete) path** -- `forward_backward()`, `TorchCHMM.forward()`:
+- CHMM parameters (T, Pi_x) receive gradients via JAX VJP
+- Observations are discrete int indices -- no gradient flow to encoder
+- Used by existing MNIST experiment models and vmap batched path
+
+**Soft (differentiable) path** -- `forward_backward_soft()`, `TorchCHMM.forward_soft()`:
+- Accepts continuous `log_obs_weights [T, n_obs]` from an encoder
+- Gradients flow through obs_weights back to encoder (verified: encoder.weight.grad norm ~3.4)
+- Uses full-state messages [n_states] (no block compression)
+- Currently single-sequence only; batched soft path (vmap) not yet implemented
+- Tested: 8 tests in `test_soft_observations.py`
 
 ### PyTorch Bridge
 
-- Assumes discrete observations (argmax from encoder)
-- No soft observation probabilities yet
-- TODO: Add soft emission support for end-to-end differentiable hybrid pipelines
+- Hard path: `TorchCHMM.forward()` and `.forward_batch()` (discrete obs, batched via vmap)
+- Soft path: `TorchCHMM.forward_soft()` (continuous obs_weights, single-sequence)
+- TODO: Batched `forward_soft_batch()` via vmap for practical training speed
 
 ## Testing Status
 
-Tests pass as of 2025-11-18:
+Tests pass (33/33 as of 2026-03-28):
 
 ```bash
 cd jax/
-pytest tests/  # test_core.py, test_pytorch_bridge.py, test_batching_vmap.py
+pytest tests/  # test_core.py, test_pytorch_bridge.py, test_batching_vmap.py, test_soft_observations.py
 ```
 
 Validated against Julia reference fixtures for forward, backward, Viterbi, EM E-step, and M-step.
 
 ## Next Steps
 
-1. **Soft-observation interface** - Enable end-to-end gradient flow through observation probabilities
-2. **Remove remaining Python loops** - Eliminate `tolist()` and `for` loops in block-info precomputation and `_update_C()`
+1. **Batched soft path** - vmap over `forward_soft` for practical training speed
+2. **PyTorch bridge test for encoder gradients** - Automated regression test for end-to-end gradient flow
+3. **Remove remaining Python loops** - Eliminate `tolist()` and `for` loops in block-info precomputation and `_update_C()`
 3. **Benchmark suite** - Systematic performance comparison vs Julia and PyTorch
 4. **Flax/Haiku wrappers** - Pure JAX pipeline modules
 

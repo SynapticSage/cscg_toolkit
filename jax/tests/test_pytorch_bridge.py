@@ -317,5 +317,44 @@ def test_torch_chmm_from_pretrained_forward_batch():
     assert torch.all(torch.isfinite(log_liks))
 
 
+def test_forward_soft_encoder_gradient_flow():
+    """End-to-end gradient flow: encoder -> forward_soft -> loss -> encoder.grad.
+
+    This is the main claim of the soft-observation interface: CHMM likelihood
+    gradients reach an upstream PyTorch encoder through log_obs_weights.
+    """
+    import torch.nn as nn
+
+    encoder = nn.Linear(16, 9)  # 9 observations
+    chmm = TorchCHMM(n_states=27, n_actions=4, seed=42)
+
+    x = torch.randn(5, 16, requires_grad=True)  # 5 timesteps
+    actions = torch.randint(0, 4, (4,))
+
+    # Encoder produces soft observation weights (differentiable)
+    log_obs_weights = encoder(x)  # [5, 9]
+    log_lik, posteriors = chmm.forward_soft(log_obs_weights, actions)
+
+    loss = -log_lik
+    loss.backward()
+
+    # Gradients must reach the encoder parameters
+    assert encoder.weight.grad is not None, "Encoder weight should have gradients"
+    assert torch.any(encoder.weight.grad != 0), "Encoder gradients should be non-zero"
+    assert torch.all(torch.isfinite(encoder.weight.grad)), "Encoder gradients should be finite"
+
+    # Gradients must reach the input
+    assert x.grad is not None, "Input x should have gradients"
+    assert torch.any(x.grad != 0), "Input gradients should be non-zero"
+
+    # CHMM parameters should also have gradients
+    assert chmm.log_T_logits.grad is not None, "T should have gradients"
+    assert chmm.Pi_x.grad is not None, "Pi_x should have gradients"
+
+    # Posteriors should be valid
+    assert posteriors.shape == (5, 27)
+    assert torch.all(torch.isfinite(posteriors))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

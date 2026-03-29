@@ -13,6 +13,7 @@ from .baseline_models import (
 from .chmm_hybrid_models import (
     MNISTWithCHMM,
     MNISTWithCHMMSensory,
+    MNISTWithCHMMSoft,
     SequentialMNISTWithCHMM,
     LanguageModelWithCHMM,
 )
@@ -28,4 +29,6 @@ __all__ = [
     "LanguageModelWithCHMM",
     # CHMM sensory (no actions)
     "MNISTWithCHMMSensory",
+    # CHMM soft (end-to-end differentiable)
+    "MNISTWithCHMMSoft",
 ]

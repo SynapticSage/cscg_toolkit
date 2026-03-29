@@ -324,11 +324,113 @@ class MNISTWithCHMMSensory(nn.Module):
         return logits, log_likelihood
 
 
+class MNISTWithCHMMSoft(nn.Module):
+    """MNIST CNN with soft-observation CHMM (end-to-end differentiable).
+
+    Uses TorchCHMM.forward_soft() so CHMM likelihood gradients flow back
+    through the observation weights to the CNN encoder. This is the only
+    variant where the CHMM loss directly trains the encoder.
+
+    Architecture: Conv layers -> Linear (log_obs_weights) -> CHMM soft -> MLP -> Softmax
+
+    Args:
+        n_states: Total CHMM hidden states
+        n_actions: Number of actions for CHMM transitions
+        n_observations: Number of observation categories
+        dropout: Dropout probability
+    """
+
+    def __init__(self, n_states=81, n_actions=4, n_observations=9, dropout=0.5):
+        super().__init__()
+
+        self.n_observations = n_observations
+        self.n_states = n_states
+
+        # Conv feature extractor (same backbone as other variants)
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
+
+        # Soft observation head: conv features -> log emission weights
+        # This is the differentiable replacement for hard quantization
+        self.obs_head = nn.Linear(64, n_observations)
+
+        # CHMM (uses forward_soft for gradient flow)
+        self.chmm = TorchCHMM(n_states=n_states, n_actions=n_actions)
+
+        # Classifier on full-state posteriors
+        self.fc1 = nn.Linear(n_states, 128)
+        self.fc2 = nn.Linear(128, 10)
+        self.dropout = nn.Dropout(dropout)
+
+        # Precompute spatial actions (same raster-scan pattern as MNISTWithCHMM)
+        self._actions_cache = None
+
+    def _get_actions(self, seq_len, device):
+        """Get raster-scan spatial actions (cached)."""
+        if self._actions_cache is not None and self._actions_cache.size(0) == seq_len - 1:
+            return self._actions_cache.to(device)
+
+        grid_w = 7
+        actions_list = []
+        for pos in range(seq_len - 1):
+            row_curr = pos // grid_w
+            row_next = (pos + 1) // grid_w
+            action = 1 if row_next > row_curr else 0  # down or right
+            actions_list.append(action)
+
+        self._actions_cache = torch.tensor(actions_list, dtype=torch.long, device=device)
+        return self._actions_cache
+
+    def forward(self, x):
+        """
+        Args:
+            x: (batch, 1, 28, 28)
+
+        Returns:
+            logits: (batch, 10)
+            log_likelihood: (batch,) CHMM log-likelihood
+        """
+        batch_size = x.size(0)
+
+        # Conv features
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(batch_size, 64, -1).permute(0, 2, 1)  # (batch, 49, 64)
+
+        # Soft observation weights (differentiable -- gradients flow here)
+        log_obs_weights = self.obs_head(x)  # (batch, 49, n_observations)
+
+        # Spatial actions
+        actions = self._get_actions(49, x.device)  # (48,)
+
+        # CHMM inference per sequence (soft path -- no vmap yet)
+        log_liks = []
+        all_posteriors = []
+        for i in range(batch_size):
+            log_lik, posteriors = self.chmm.forward_soft(
+                log_obs_weights[i],  # [49, n_obs]
+                actions,             # [48]
+            )
+            log_liks.append(log_lik)
+            all_posteriors.append(posteriors)  # [49, n_states]
+
+        log_likelihood = torch.stack(log_liks)        # [batch]
+        posteriors = torch.stack(all_posteriors)        # [batch, 49, n_states]
+
+        # Pool posteriors and classify
+        chmm_features = posteriors.mean(dim=1)  # [batch, n_states]
+        x_out = F.relu(self.fc1(chmm_features))
+        x_out = self.dropout(x_out)
+        logits = self.fc2(x_out)
+
+        return logits, log_likelihood
+
 
 class SequentialMNISTWithCHMM(nn.Module):
     """Sequential MNIST with CHMM before LSTM.
 
-    Architecture: Pixels → CHMM → LSTM → Classifier
+    Architecture: Pixels -> CHMM -> LSTM -> Classifier
 
     Args:
         n_states: CHMM hidden states
