@@ -493,13 +493,12 @@ def viterbi(
         i_mask = jnp.arange(max_block_size) < i_size
         j_mask = jnp.arange(max_block_size) < j_size
 
-        # Mask message_prev and T_block
-        message_prev_masked = jnp.where(i_mask, message_prev, 0.0)
+        # Mask for max-product (avoid -inf * 0 = NaN with heterogeneous clones)
         T_mask = j_mask[:, None] & i_mask[None, :]
-        T_block_masked = jnp.where(T_mask, T_block, -jnp.inf)  # Use -inf for max
-
-        # Compute max-product
-        message_curr = jnp.max(T_block_masked * message_prev_masked[None, :], axis=1)
+        # Compute product, then mask invalid entries to 0 before max
+        product = T_block * message_prev[None, :]
+        product_masked = jnp.where(T_mask, product, 0.0)
+        message_curr = jnp.max(product_masked, axis=1)
 
         # Normalize (only over valid entries)
         p_obs = jnp.max(jnp.where(j_mask, message_curr, -jnp.inf))

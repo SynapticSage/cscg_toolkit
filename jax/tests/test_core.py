@@ -168,5 +168,33 @@ def test_viterbi():
     assert log_prob <= log_lik_fb + 1e-4  # Allow small numerical tolerance
 
 
+def test_viterbi_heterogeneous_clones():
+    """Test Viterbi with non-uniform clone counts (regression: -inf * 0 = NaN)."""
+    # 4 observations with different clone counts: 2, 5, 3, 4
+    n_clones = jnp.array([2, 5, 3, 4])
+    chmm = init_chmm(
+        n_clones=n_clones,
+        n_observations=4,
+        n_actions=4,
+        seed=42
+    )
+
+    observations = jnp.array([0, 1, 2, 3, 1, 0, 2, 3])
+    actions = jnp.array([1, 2, 3, 0, 1, 2, 3])
+
+    states, log_prob = viterbi(chmm.T, chmm.Pi_x, n_clones, observations, actions)
+
+    assert states.shape == (len(observations),)
+    assert jnp.isfinite(log_prob), f"log_prob is {log_prob}, expected finite"
+    assert jnp.all(jnp.isfinite(states)), "states contain non-finite values"
+
+    # States must belong to correct observation blocks
+    state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
+    for t, (obs, state) in enumerate(zip(observations, states)):
+        assert state_loc[obs] <= state < state_loc[obs + 1], (
+            f"t={t}: state {state} not in obs {obs} block [{state_loc[obs]}, {state_loc[obs+1]})"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
