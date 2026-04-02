@@ -101,12 +101,10 @@ def _update_T(C: jax.Array, pseudocount: float) -> jax.Array:
         pseudocount: Smoothing parameter
 
     Returns:
-        Normalized transition matrix T[a, i, j] = P(j|i, a)
+        Normalized transition matrix
     """
     T = C + pseudocount
-    # Sum over destination states (axis 2)
     norm = jnp.sum(T, axis=2, keepdims=True)
-    # Avoid division by zero
     norm = jnp.where(norm == 0, 1.0, norm)
     return T / norm
 
@@ -390,22 +388,16 @@ def _update_C(
         log_T_block_masked = jnp.where(T_mask, log_T_block, -jnp.inf)
 
         # Compute log_xi in log-space: log(alpha[i] * T[j, i] * beta[j])
-        # = log_alpha[i] + log_T[j, i] + log_beta[j]
-        # Transpose log_T_block to get [from, to] ordering
         log_xi = log_alpha_masked[:, None] + log_T_block_masked.T + log_beta_masked[None, :]
 
-        # Normalize log_xi using logsumexp
+        # Normalize
         log_xi_norm = logsumexp(log_xi)
         log_xi = log_xi - log_xi_norm
 
-        # Convert back to probability space for accumulation
         xi = jnp.exp(log_xi)
-
-        # Transpose xi back to match C indexing [to, from]
         xi_T = xi.T
 
-        # Accumulate xi into C using dynamic slice operations
-        # Extract current C block, add xi, write back
+        # Accumulate into C at (j_start, i_start)
         C_a_slice = C_carry[a]
         C_block = lax.dynamic_slice(
             C_a_slice,
