@@ -112,6 +112,9 @@ def print_disambiguation_summary(
             state_locs[s].add(cell)
     shared = {s: locs for s, locs in state_locs.items() if len(locs) > 1}
 
+    # Failure mode 3: unvisited cells
+    n_unvisited = details["n_accessible"] - details["n_cells_visited"]
+
     if multi_state:
         print(f"  Cells with multiple states ({len(multi_state)}):")
         for cell, states in sorted(multi_state.items())[:8]:
@@ -120,5 +123,7 @@ def print_disambiguation_summary(
         print(f"  States shared across cells ({len(shared)}):")
         for s, locs in sorted(shared.items())[:8]:
             print(f"    state {s}: {sorted(locs)}")
-    if not multi_state and not shared:
+    if n_unvisited > 0:
+        print(f"  Unvisited cells: {n_unvisited}")
+    if score == 1.0:
         print("  Perfect 1-to-1 disambiguation")
