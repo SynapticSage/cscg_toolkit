@@ -305,16 +305,24 @@ def _update_C(
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
     mess_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones[observations])])
 
-    # Convert T to log-space once at the start
-    log_T = jnp.log(T + 1e-10)
+    # Pad arrays to avoid dynamic_slice index clamping at boundaries.
+    # Without padding, dynamic_slice(arr, (start,), (max_block_size,)) silently
+    # reads from clamped positions when start + max_block_size > len(arr).
+    max_block_size = int(jnp.max(n_clones))
+    pad = max_block_size - 1
+
+    log_T_raw = jnp.log(T + 1e-10)
+    log_T = jnp.pad(log_T_raw,
+                     ((0, 0), (0, pad), (0, pad)),
+                     constant_values=-jnp.inf)
+    log_alpha = jnp.pad(log_alpha, (0, pad), constant_values=-jnp.inf)
+    log_beta = jnp.pad(log_beta, (0, pad), constant_values=-jnp.inf)
 
     # Pre-compute block info (avoid Python loops and int() conversions)
     obs_list = observations.tolist()
     actions_list = actions.tolist()
     state_loc_np = np.array(state_loc)
     mess_loc_np = np.array(mess_loc)
-
-    max_block_size = int(jnp.max(n_clones))
 
     # Build block info arrays for all timesteps
     block_actions = []
@@ -397,16 +405,21 @@ def _update_C(
         xi = jnp.exp(log_xi)
         xi_T = xi.T
 
-        # Accumulate into C at (j_start, i_start)
+        # Accumulate into C at (j_start, i_start).
+        # Mask xi_T so padded entries beyond the actual block are exactly 0,
+        # preventing dynamic_update_slice from overwriting adjacent blocks.
+        write_mask = j_mask[:, None] & i_mask[None, :]
+        xi_T_masked = jnp.where(write_mask, xi_T, 0.0)
+
         C_a_slice = C_carry[a]
         C_block = lax.dynamic_slice(
             C_a_slice,
             (j_start, i_start),
             (max_block_size, max_block_size)
         )
-        C_block_updated = C_block + xi_T
+        C_block_updated = C_block + xi_T_masked
 
-        # Write back using dynamic_update_slice
+        # Write back
         C_a_updated = lax.dynamic_update_slice(
             C_a_slice,
             C_block_updated,
@@ -429,11 +442,15 @@ def _update_C(
         block_t_starts
     )
 
-    # Run scan with C_new as carry
-    C_new = jnp.zeros_like(T)
-    C_final, _ = lax.scan(scan_step, C_new, inputs)
+    # Pad C so dynamic_slice/dynamic_update_slice never clamp at boundaries.
+    # Without padding, dynamic_slice(C, (start,), (max_block_size,)) clamps
+    # start when start + max_block_size > n_states, reading the wrong cells.
+    pad = max_block_size - 1
+    C_padded = jnp.zeros((n_actions, n_states + pad, n_states + pad))
+    C_final_padded, _ = lax.scan(scan_step, C_padded, inputs)
 
-    return C_final
+    # Trim padding
+    return C_final_padded[:, :n_states, :n_states]
 
 
 def learn_em(
