@@ -45,16 +45,20 @@ def forward(
         log_likelihoods: Log P(x_t | x_1:t-1, a_1:t-1) for each t [T]
         alpha: Log forward messages if store_messages=True, else None [varies]
     """
-    # Convert to log-space once at start
-    log_T = jnp.log(T + 1e-10)  # Add epsilon to avoid log(0)
-    log_Pi_x = jnp.log(Pi_x + 1e-10)
-
     # Compute indices for clone locations
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
     mess_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones[observations])])
 
+    max_block_size = int(jnp.max(n_clones))
+    pad = max_block_size - 1
+
+    # Convert to log-space, padded to prevent dynamic_slice index clamping
+    log_T_raw = jnp.log(T + 1e-10)
+    log_T = jnp.pad(log_T_raw, ((0, 0), (0, pad), (0, pad)),
+                     constant_values=-jnp.inf)
+    log_Pi_x = jnp.log(Pi_x + 1e-10)
+
     # Initialize first message in log-space
-    # Convert to Python int to avoid JAX tracing issues with indexing
     j = int(observations[0])
     j_start, j_stop = int(state_loc[j]), int(state_loc[j + 1])
     log_message_0 = lax.dynamic_slice(log_Pi_x, (j_start,), (j_stop - j_start,))
@@ -73,8 +77,6 @@ def forward(
     obs_list = observations.tolist()
     actions_list = actions.tolist()
     state_loc_np = np.array(state_loc)
-
-    max_block_size = int(jnp.max(n_clones))  # Maximum clones per observation
 
     # Build block info arrays and padded messages
     block_actions = []
@@ -267,29 +269,31 @@ def backward(
     Returns:
         log_beta: Log backward messages (compressed) [varies]
     """
-    # Convert to log-space once at start
-    log_T = jnp.log(T + 1e-45)
-
     # Compute indices for clone locations
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
     mess_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones[observations])])
 
+    max_block_size = int(jnp.max(n_clones))
+    pad = max_block_size - 1
+
+    # Convert to log-space, padded to prevent dynamic_slice index clamping
+    log_T = jnp.pad(jnp.log(T + 1e-45),
+                     ((0, 0), (0, pad), (0, pad)),
+                     constant_values=-jnp.inf)
+
     # Initialize last message in log-space (uniform distribution)
-    # Convert to Python int to avoid JAX tracing issues
     i = int(observations[-1])
     i_start, i_stop = int(state_loc[i]), int(state_loc[i + 1])
     n_clones_i = i_stop - i_start
-    log_message_T = -jnp.log(n_clones_i) * jnp.ones(n_clones_i)  # log(1/n)
+    log_message_T = -jnp.log(n_clones_i) * jnp.ones(n_clones_i)
 
     if len(observations) == 1:
         return log_message_T
 
-    # Precompute block info for backward - determine max block size
+    # Precompute block info for backward
     obs_list = observations.tolist()
     actions_list = actions.tolist()
     state_loc_np = np.array(state_loc)
-
-    max_block_size = int(jnp.max(n_clones))
 
     # Build block info arrays
     block_actions_bwd = []
