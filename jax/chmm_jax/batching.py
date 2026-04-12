@@ -49,18 +49,17 @@ def forward_vmap(
         This function is designed to be vmapped. Use forward_batch() for
         convenient batched inference.
     """
-    # Convert to log-space once at start
-    log_T = jnp.log(T + 1e-10)
-    log_Pi_x = jnp.log(Pi_x + 1e-10)
-
     # Compute state locations (clone boundaries)
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
-
-    # Get maximum clone block size for padding
     max_block_size = jnp.max(n_clones).astype(jnp.int32)
+    pad = max_block_size - 1
+
+    # Convert to log-space, padded to prevent dynamic_slice index clamping
+    log_T = jnp.pad(jnp.log(T + 1e-10),
+                     ((0, 0), (0, pad), (0, pad)), constant_values=-jnp.inf)
+    log_Pi_x = jnp.pad(jnp.log(Pi_x + 1e-10), (0, pad), constant_values=-jnp.inf)
 
     # Initialize first message (t=0) in log-space
-    # Use dynamic_slice to extract initial message for first observation
     obs_0 = observations[0]
     start_idx = state_loc[obs_0]
     size = state_loc[obs_0 + 1] - start_idx
@@ -190,14 +189,14 @@ def backward_vmap(
         Returns padded log messages for all timesteps. Use masking to extract
         valid entries based on n_clones[observations[t]].
     """
-    # Convert to log-space once at start
-    log_T = jnp.log(T + 1e-10)
-
     # Compute state locations (clone boundaries)
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
-
-    # Get maximum clone block size for padding
     max_block_size = jnp.max(n_clones).astype(jnp.int32)
+    pad = max_block_size - 1
+
+    # Convert to log-space, padded to prevent dynamic_slice index clamping
+    log_T = jnp.pad(jnp.log(T + 1e-10),
+                     ((0, 0), (0, pad), (0, pad)), constant_values=-jnp.inf)
 
     # Initialize last message (t=T-1) in log-space
     obs_T = observations[-1]
@@ -339,12 +338,14 @@ def _forward_backward_single(
     # We need to compute forward messages (alpha) to get full posteriors
     # For now, use a modified forward that stores messages
 
-    # Convert to log-space
-    log_T = jnp.log(T + 1e-10)
-    log_Pi_x = jnp.log(Pi_x + 1e-10)
-
     state_loc = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_clones)])
     max_block_size = jnp.max(n_clones).astype(jnp.int32)
+    pad = max_block_size - 1
+
+    # Convert to log-space, padded to prevent dynamic_slice index clamping
+    log_T = jnp.pad(jnp.log(T + 1e-10),
+                     ((0, 0), (0, pad), (0, pad)), constant_values=-jnp.inf)
+    log_Pi_x = jnp.pad(jnp.log(Pi_x + 1e-10), (0, pad), constant_values=-jnp.inf)
 
     # Initialize first forward message
     obs_0 = observations[0]

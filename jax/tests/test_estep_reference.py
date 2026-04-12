@@ -18,6 +18,7 @@ import pytest
 
 from chmm_jax.core import CHMM, init_chmm, forward_backward, _update_C, _em_step
 from chmm_jax.message_passing import forward, backward
+from chmm_jax.batching import forward_batch, forward_backward_batch, backward_vmap
 
 
 # ---------------------------------------------------------------------------
@@ -351,3 +352,77 @@ class TestEMMonotonicity:
             assert lls[i] >= lls[i - 1] - 5e-4, (
                 f"EM iteration {i}: ll decreased from {lls[i-1]:.6f} to {lls[i]:.6f}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Test 4: batched paths match single-sequence (heterogeneous clones)
+# ---------------------------------------------------------------------------
+
+class TestBatchedHeterogeneousClones:
+    """Batched forward/backward must match single-sequence with n_clones=[2,3,1]."""
+
+    @pytest.fixture
+    def setup(self):
+        n_clones = jnp.array([2, 3, 1], dtype=jnp.int32)
+        chmm = init_chmm(n_clones, n_observations=3, n_actions=2,
+                         pseudocount=1e-3, seed=0)
+        obs = jnp.array([0, 1, 2, 1, 0], dtype=jnp.int32)
+        acts = jnp.array([0, 1, 0, 1], dtype=jnp.int32)
+        return chmm, n_clones, obs, acts
+
+    def test_forward_batch_log_likelihood(self, setup):
+        """forward_batch() log-likelihood matches single-sequence forward()."""
+        chmm, n_clones, obs, acts = setup
+
+        # Single-sequence
+        ll_single, _ = forward(chmm.T, chmm.Pi_x, n_clones, obs, acts)
+        ll_single_total = float(jnp.sum(ll_single))
+
+        # Batched (batch of 1)
+        obs_batch = obs[None, :]
+        acts_batch = acts[None, :]
+        ll_batch = forward_batch(chmm, obs_batch, acts_batch)
+
+        np.testing.assert_allclose(float(ll_batch[0]), ll_single_total, atol=1e-5,
+                                   err_msg="forward_batch LL != forward LL")
+
+    def test_forward_backward_batch_log_likelihood(self, setup):
+        """forward_backward_batch() LL matches single-sequence forward_backward()."""
+        chmm, n_clones, obs, acts = setup
+
+        # Single-sequence
+        ll_single, _ = forward_backward(chmm, obs, acts)
+
+        # Batched (batch of 2 identical sequences)
+        obs_batch = jnp.stack([obs, obs])
+        acts_batch = jnp.stack([acts, acts])
+        ll_batch, _ = forward_backward_batch(chmm, obs_batch, acts_batch)
+
+        np.testing.assert_allclose(float(ll_batch[0]), float(ll_single), atol=1e-5,
+                                   err_msg="forward_backward_batch LL != forward_backward LL")
+        np.testing.assert_allclose(float(ll_batch[1]), float(ll_single), atol=1e-5,
+                                   err_msg="Second batch element should match too")
+
+    def test_backward_vmap_matches_single(self, setup):
+        """backward_vmap() padded output matches single-sequence backward() repacked."""
+        chmm, n_clones, obs, acts = setup
+        max_block_size = int(jnp.max(n_clones))
+
+        # Single-sequence backward (compressed 1D)
+        beta_single = backward(chmm.T, n_clones, obs, acts)
+
+        # Repack into [T, max_block_size] padded layout
+        state_loc = np.concatenate([[0], np.cumsum(np.asarray(n_clones))])
+        mess_loc = np.concatenate([[0], np.cumsum(np.asarray(n_clones[obs]))])
+        T_len = len(obs)
+        beta_padded_ref = np.full((T_len, max_block_size), -np.inf)
+        for t in range(T_len):
+            m0, m1 = mess_loc[t], mess_loc[t + 1]
+            block_size = m1 - m0
+            beta_padded_ref[t, :block_size] = np.asarray(beta_single[m0:m1])
+
+        # Batched backward (returns [T, max_block_size] padded)
+        beta_vmap = backward_vmap(chmm.T, n_clones, obs, acts)
+
+        np.testing.assert_allclose(np.asarray(beta_vmap), beta_padded_ref, atol=1e-5,
+                                   err_msg="backward_vmap != backward (repacked)")
