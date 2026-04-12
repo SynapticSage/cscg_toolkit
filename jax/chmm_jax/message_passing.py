@@ -338,30 +338,34 @@ def backward(
         """
         a, i_start, i_size, j_start, j_size = inputs
 
-        # Extract log T block with static size
+        # Extract T block at SAME position as forward: (j_start, i_start)
+        # T[a, dest, source] = P(dest|source, a). Rows=dest, cols=source.
+        # Backward needs: beta[source] = sum_dest P(dest|source) * beta_next[dest]
+        # = sum over rows of T_block.T, so we transpose before multiply.
         log_T_block = lax.dynamic_slice(
             log_T[a],
-            (i_start, j_start),
+            (j_start, i_start),
             (max_block_size, max_block_size)
         )
+        # Transpose: T_block_T[source, dest] for backward message update
+        log_T_block_T = log_T_block.T
 
         # Apply masking (use -inf for invalid entries)
         i_mask = jnp.arange(max_block_size) < i_size
         j_mask = jnp.arange(max_block_size) < j_size
 
-        # Mask log_message_next and log_T_block
         log_message_next_masked = jnp.where(j_mask, log_message_next, -jnp.inf)
+        # Mask is [source, dest] after transpose
         T_mask = i_mask[:, None] & j_mask[None, :]
-        log_T_block_masked = jnp.where(T_mask, log_T_block, -jnp.inf)
+        log_T_block_masked = jnp.where(T_mask, log_T_block_T, -jnp.inf)
 
-        # Compute transition in log-space: log(T @ exp(log_beta))
-        # = logsumexp(log_T + log_beta, axis=1)
+        # beta[source] = logsumexp_dest(log_T_T[source, dest] + log_beta[dest])
         log_message_curr = logsumexp(
             log_T_block_masked + log_message_next_masked[None, :],
             axis=1
         )
 
-        # Normalize using logsumexp (only over valid entries)
+        # Normalize
         log_message_curr_masked = jnp.where(i_mask, log_message_curr, -jnp.inf)
         log_norm = logsumexp(log_message_curr_masked)
         log_message_curr = jnp.where(i_mask, log_message_curr - log_norm, -jnp.inf)
@@ -777,18 +781,18 @@ def backward_soft(
     if T_len == 1:
         return log_beta_T[None, :]
 
-    # Scan step (running backward): beta_t = T[a_t] @ (e_{t+1} * beta_{t+1})
+    # Scan step (running backward): beta[source] = sum_dest P(dest|source) * e_next[dest] * beta_next[dest]
     def scan_step(log_beta_next, inputs):
         a_t, log_e_next = inputs
 
         # Weight next beta by emission
         log_weighted = log_beta_next + log_e_next  # [n_states]
 
-        # Transition: sum_j T[a,i,j] * weighted_beta[j] for each i
-        # T[a,i,j] = P(j|i,a), we want sum_j for each i
+        # Backward: beta[source] = sum_dest T[a, dest, source] * weighted[dest]
+        # T[a].T[source, dest] = T[a, dest, source] = P(dest|source, a)
         log_beta_curr = logsumexp(
-            log_T[a_t] + log_weighted[None, :],  # [n_states, n_states] broadcast
-            axis=1,  # sum over destination states j
+            log_T[a_t].T + log_weighted[None, :],  # [n_states, n_states]
+            axis=1,  # sum over dest
         )  # [n_states]
 
         # Normalize

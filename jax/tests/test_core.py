@@ -33,7 +33,7 @@ def test_init_chmm():
 
     # Check normalization
     assert jnp.allclose(jnp.sum(chmm.Pi_x), 1.0)
-    assert jnp.allclose(jnp.sum(chmm.T, axis=2), 1.0)  # Each row sums to 1
+    assert jnp.allclose(jnp.sum(chmm.T, axis=1), 1.0)  # Each column sums to 1 (sum over dest)
 
 
 def test_update_T():
@@ -45,12 +45,12 @@ def test_update_T():
 
     T = _update_T(C, pseudocount=0.0)
 
-    # Each row should sum to 1
-    assert jnp.allclose(jnp.sum(T, axis=2), 1.0)
+    # Each column should sum to 1 (sum over dest = axis 1)
+    assert jnp.allclose(jnp.sum(T, axis=1), 1.0)
 
     # With pseudocount
     T_smooth = _update_T(C, pseudocount=1.0)
-    assert jnp.allclose(jnp.sum(T_smooth, axis=2), 1.0)
+    assert jnp.allclose(jnp.sum(T_smooth, axis=1), 1.0)
 
 
 def test_forward_backward():
@@ -111,7 +111,7 @@ def test_learn_em():
     assert log_lik_final >= log_lik_init - 1e-6  # Allow small numerical error
 
     # Transition matrix should still be normalized
-    assert jnp.allclose(jnp.sum(chmm_trained.T, axis=2), 1.0)
+    assert jnp.allclose(jnp.sum(chmm_trained.T, axis=1), 1.0)
 
 
 def test_viterbi():

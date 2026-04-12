@@ -87,9 +87,10 @@ def backward_reference(T, n_clones, observations, actions):
         ic0, ic1 = state_loc[o_curr], state_loc[o_curr + 1]
         jn0, jn1 = state_loc[o_next], state_loc[o_next + 1]
 
-        # Dense backward: T[a, i, j] * beta[j], summed over j (dest)
-        # Here i=source block (backward extracts at (i_start, j_start))
-        T_block = T[a, ic0:ic1, jn0:jn1]
+        # Dense backward: beta[source] = sum_dest P(dest|source) * beta[dest]
+        # T[a, dest, source] = P(dest|source, a), so T[a, jn0:jn1, ic0:ic1].T
+        # gives [source, dest] with P(dest|source, a)
+        T_block = T[a, jn0:jn1, ic0:ic1].T  # [source, dest]
         beta_next = np.exp(messages[t + 1])
         msg_raw = T_block @ beta_next
 

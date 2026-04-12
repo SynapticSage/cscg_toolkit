@@ -4,8 +4,8 @@ PyTorch integration via custom autograd function.
 Enables using JAX CHMM modules within PyTorch neural networks with full gradient flow.
 
 Uses constrained parameterization to maintain probability constraints:
-- Transition matrices parameterized as softmax(log_T_logits)
-- Ensures T[a,i,j] >= 0 and sum_j T[a,i,j] = 1 for all a,i
+- Transition matrices parameterized as softmax(log_T_logits, dim=-2)
+- T[a, dest, source] = P(dest|source, a); each source column sums to 1
 
 Created: 2025-11-03
 Modified: 2025-11-17
@@ -374,7 +374,8 @@ class TorchCHMM(nn.Module):
         # Register JAX parameters as PyTorch parameters
         # Use log-space parameterization for T to maintain normalization constraints
         # T[a, i, j] = P(j|i, a) must satisfy: sum_j T[a, i, j] = 1
-        # We parameterize as: T = softmax(log_T_logits, dim=-1)
+        # We parameterize as: T = softmax(log_T_logits, dim=-2)
+        # dim=-2 normalizes over dest (rows) so each source column sums to 1
         T_init = torch.from_numpy(np.array(self.chmm.T)).float()
         # Convert to logits (inverse of softmax): log(T)
         self.log_T_logits = nn.Parameter(torch.log(T_init + 1e-10))
@@ -398,8 +399,8 @@ class TorchCHMM(nn.Module):
             posteriors: Posterior state probabilities [varies] (compressed)
         """
         # Convert logits to probabilities via softmax (ensures normalization)
-        # T[a, i, j] = softmax(log_T_logits[a, i, :])
-        T = torch.softmax(self.log_T_logits, dim=-1)
+        # T[a, dest, source] = softmax(log_T_logits[a, :, source], dim=-2)
+        T = torch.softmax(self.log_T_logits, dim=-2)
 
         # Convert observations and actions to JAX arrays
         obs_jax = jnp.array(observations.detach().cpu().numpy(), dtype=jnp.int32)
@@ -443,7 +444,7 @@ class TorchCHMM(nn.Module):
                 f"{n_obs_expected}. Pass n_observations={n_obs} to TorchCHMM()."
             )
 
-        T = torch.softmax(self.log_T_logits, dim=-1)
+        T = torch.softmax(self.log_T_logits, dim=-2)
 
         actions_jax = jnp.array(actions.detach().cpu().numpy(), dtype=jnp.int32)
 
@@ -481,7 +482,7 @@ class TorchCHMM(nn.Module):
             f"!= n_observations ({n_obs})"
         )
 
-        T = torch.softmax(self.log_T_logits, dim=-1)
+        T = torch.softmax(self.log_T_logits, dim=-2)
 
         actions_jax = jnp.array(actions.detach().cpu().numpy(), dtype=jnp.int32)
 
@@ -537,7 +538,7 @@ class TorchCHMM(nn.Module):
 
         # Get current parameters from PyTorch
         # Compute T from logits via softmax
-        T = torch.softmax(self.log_T_logits, dim=-1)
+        T = torch.softmax(self.log_T_logits, dim=-2)
         T_jax = jnp.array(T.detach().cpu().numpy())
         Pi_x_jax = jnp.array(self.Pi_x.detach().cpu().numpy())
 
@@ -585,7 +586,7 @@ class TorchCHMM(nn.Module):
             ```
         """
         # Convert logits to probabilities via softmax
-        T = torch.softmax(self.log_T_logits, dim=-1)
+        T = torch.softmax(self.log_T_logits, dim=-2)
 
         # Convert observations and actions to JAX arrays
         obs_jax = jnp.array(observations.detach().cpu().numpy(), dtype=jnp.int32)
@@ -641,7 +642,7 @@ class TorchCHMMFromPretrained(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass."""
         # Convert logits to probabilities
-        T = torch.softmax(self.log_T_logits, dim=-1)
+        T = torch.softmax(self.log_T_logits, dim=-2)
 
         obs_jax = jnp.array(observations.detach().cpu().numpy(), dtype=jnp.int32)
         actions_jax = jnp.array(actions.detach().cpu().numpy(), dtype=jnp.int32)
@@ -667,7 +668,7 @@ class TorchCHMMFromPretrained(nn.Module):
         See TorchCHMM.viterbi() for full documentation.
         """
         # Convert logits to probabilities
-        T = torch.softmax(self.log_T_logits, dim=-1)
+        T = torch.softmax(self.log_T_logits, dim=-2)
 
         obs_jax = jnp.array(observations.cpu().numpy(), dtype=jnp.int32)
         actions_jax = jnp.array(actions.cpu().numpy(), dtype=jnp.int32)
@@ -698,7 +699,7 @@ class TorchCHMMFromPretrained(nn.Module):
         See TorchCHMM.forward_batch() for full documentation.
         """
         # Convert logits to probabilities
-        T = torch.softmax(self.log_T_logits, dim=-1)
+        T = torch.softmax(self.log_T_logits, dim=-2)
 
         obs_jax = jnp.array(observations.detach().cpu().numpy(), dtype=jnp.int32)
         actions_jax = jnp.array(actions.detach().cpu().numpy(), dtype=jnp.int32)
@@ -791,7 +792,7 @@ class TorchCHMMSensory(nn.Module):
             posteriors: Posterior state probabilities [varies] (compressed)
         """
         # Convert logits to probabilities
-        T = torch.softmax(self.log_T_logits, dim=-1)
+        T = torch.softmax(self.log_T_logits, dim=-2)
 
         # Convert observations to JAX
         obs_jax = jnp.array(observations.detach().cpu().numpy(), dtype=jnp.int32)
@@ -840,7 +841,7 @@ class TorchCHMMSensory(nn.Module):
             ```
         """
         # Convert logits to probabilities
-        T = torch.softmax(self.log_T_logits, dim=-1)
+        T = torch.softmax(self.log_T_logits, dim=-2)
 
         obs_jax = jnp.array(observations.cpu().numpy(), dtype=jnp.int32)
 
@@ -892,7 +893,7 @@ class TorchCHMMSensory(nn.Module):
             ```
         """
         # Convert logits to probabilities
-        T = torch.softmax(self.log_T_logits, dim=-1)
+        T = torch.softmax(self.log_T_logits, dim=-2)
 
         # Convert observations to JAX
         obs_jax = jnp.array(observations.detach().cpu().numpy(), dtype=jnp.int32)

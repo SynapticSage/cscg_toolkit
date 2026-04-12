@@ -228,25 +228,24 @@ def backward_vmap(
         j_start = state_loc[obs_j]
         j_size = state_loc[obs_j + 1] - j_start
 
-        # Extract log transition block with dynamic_slice
-        # log_T[action, i_start:i_start+max, j_start:j_start+max]
+        # Extract T block at SAME position as forward: (j_start, i_start)
+        # T[a, dest, source]. Transpose for backward: beta[source] = sum_dest P(dest|source) * beta[dest]
         log_T_block = lax.dynamic_slice(
             log_T[action],
-            (i_start, j_start),
+            (j_start, i_start),
             (max_block_size, max_block_size)
         )
+        log_T_block_T = log_T_block.T  # [source, dest]
 
         # Create masks for valid entries
         i_mask = jnp.arange(max_block_size) < i_size
         j_mask = jnp.arange(max_block_size) < j_size
 
-        # Mask next log message and log transition matrix (use -inf for invalid)
         log_message_next_masked = jnp.where(j_mask, log_message_next, -jnp.inf)
         T_mask = i_mask[:, None] & j_mask[None, :]
-        log_T_block_masked = jnp.where(T_mask, log_T_block, -jnp.inf)
+        log_T_block_masked = jnp.where(T_mask, log_T_block_T, -jnp.inf)
 
-        # Compute message update in log-space (backward: log(T @ exp(log_beta)))
-        # = logsumexp(log_T + log_beta, axis=1)
+        # beta[source] = logsumexp_dest(log_T_T[source, dest] + log_beta[dest])
         log_message_curr = logsumexp(
             log_T_block_masked + log_message_next_masked[None, :],
             axis=1

@@ -96,15 +96,22 @@ def init_chmm(
 def _update_T(C: jax.Array, pseudocount: float) -> jax.Array:
     """Normalize count matrix to transition probabilities.
 
+    Layout: T[a, dest, source] = P(dest | source, a).
+    C is accumulated in the same layout by _update_C.
+
+    Normalization: for each source (column), dest probabilities sum to 1.
+    sum_dest T[a, dest, source] = 1, i.e., each column sums to 1 (axis=1).
+
     Args:
         C: Count matrix [n_actions, n_states, n_states]
         pseudocount: Smoothing parameter
 
     Returns:
-        Normalized transition matrix
+        Normalized transition matrix T[a, dest, source]
     """
     T = C + pseudocount
-    norm = jnp.sum(T, axis=2, keepdims=True)
+    # Sum over dest (axis=1, rows) so each source column sums to 1
+    norm = jnp.sum(T, axis=1, keepdims=True)
     norm = jnp.where(norm == 0, 1.0, norm)
     return T / norm
 
