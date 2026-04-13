@@ -97,11 +97,11 @@ The Baum-Welch algorithm takes a simpler form for cloned HMMs due to emission sp
 
 ## Installation
 
-This repository contains multiple implementations:
+This repository contains multiple implementations with different strengths:
 
-- **Julia** (reference): See [julia/README.md](julia/README.md) for installation, usage, and testing
-- **JAX** (active development): See [jax/README.md](jax/README.md) for installation and PyTorch integration
-- **Python** (legacy): See [python/README.md](python/README.md)
+- **JAX** (active development): Differentiable CHMM with PyTorch integration, `vmap` batching, and soft-observation interface for end-to-end neural hybrid training. Slower than Numba for pure EM, but supports `jax.grad`, GPU, and gradient flow through observation weights to upstream encoders. See [jax/README.md](jax/README.md)
+- **Julia** (reference): Original research implementation with comprehensive test fixtures. See [julia/README.md](julia/README.md)
+- **Python/Numba** (fast EM): Numba `@njit`-compiled forward/backward/EM -- fastest option for pure discrete EM on CPU, but no autodiff or neural integration. See [python/README.md](python/README.md)
 
 ---
 
@@ -109,27 +109,25 @@ This repository contains multiple implementations:
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| JAX core (message passing, EM) | **Stable** | Tested against Julia reference fixtures |
-| Batched inference (vmap) | **Stable** | 10-50x speedup, tested |
-| PyTorch bridge (CHMM params) | **Stable** | Gradient flow for T, Pi_x verified |
-| Soft-observation interface | **New** | `forward_backward_soft()` enables encoder gradients via `TorchCHMM.forward_soft()` (single-sequence; batched soft not yet available) |
-| Neural hybrid experiments | **Experimental** | MNIST models use hard discrete and soft paths; soft path needs batched vmap for practical speed |
-| Quantization strategies | **Experimental** | FixedGlobalBins requires fit_from_encoder() call |
-| MNIST experiments | **Experimental** | Proof of concept; MNIST is not a natural CSCG task |
-| Julia implementation | **Reference** | Original implementation, all tests passing |
-| Python implementation | **Legacy** | Superseded by JAX |
+| JAX core (message passing, EM) | **Stable** | Forward/backward/E-step tested against dense reference oracles |
+| Batched inference (vmap) | **Stable** | 10-50x speedup via `jax.vmap`, heterogeneous clones supported |
+| Soft-observation interface | **Stable** | `forward_backward_soft` + batched `forward_soft_batch` (27.8x vmap speedup); encoder gradients verified |
+| PyTorch bridge | **Stable** | `TorchCHMM` with `forward_soft_batch()` for end-to-end differentiable hybrid models |
+| Navigation experiments | **In progress** | George et al. 2021 severe aliasing; EM converges, 16.7% disambiguation |
+| Julia implementation | **Reference** | Original research implementation, all tests passing |
+| Python/Numba implementation | **Fast EM** | Fastest for pure discrete EM on CPU; no autodiff or neural integration |
 
 ## Contributing
 
 This is a research project. Contributions are welcome!
 
 **Priority areas**:
-- [x] Soft-observation CHMM interface (`forward_backward_soft`, `TorchCHMM.forward_soft`)
-- [ ] Batched soft-observation path (vmap over `forward_soft`)
-- [ ] Navigation experiment (core CSCG use case with real actions and aliasing)
-- [ ] Sequential MNIST / language modeling experiments
-- [ ] GPU kernel optimization (Triton)
-- [ ] Additional test coverage
+- [x] Soft-observation CHMM interface (`forward_backward_soft`, batched via vmap)
+- [x] PyTorch bridge with end-to-end encoder gradient flow
+- [ ] Navigation experiment: push disambiguation toward paper's 100% (currently 16.7%)
+- [ ] Viterbi refinement for clone sharpening after EM
+- [ ] Sequential tasks (language modeling, sequential MNIST)
+- [ ] GPU benchmarks vs Numba CPU baseline
 
 **Workflow**:
 1. Fork the repository
