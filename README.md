@@ -74,23 +74,35 @@ Hidden States: [z_0,z_1,z_2] [z_3,z_4,z_5] [z_6,z_7,z_8] ...  (3 clones per obse
 
 The Baum-Welch algorithm takes a simpler form for cloned HMMs due to emission sparsity:
 
-1. **Forward pass**: α(n+1)ᵀ = α(n)ᵀ T(xₙ, aₙ, xₙ₊₁)
-   Computes α(n) = P(x₁:ₙ, a₁:ₙ₋₁, zₙ) using only M×M blocks
+1. **Forward pass**:
 
-2. **Backward pass**: β(n) = T(xₙ, aₙ, xₙ₊₁) β(n+1)
-   Computes β(n) = P(xₙ₊₁:N, aₙ:N₋₁ | zₙ) using only M×M blocks
+$$\alpha(n+1)^\top = \alpha(n)^\top \, T(x_n, a_n, x_{n+1})$$
 
-3. **E-step**: ξᵢₖⱼ(n) = [α(n) ∘ T(i,aₙ,j) ∘ β(n+1)ᵀ] / [α(n)ᵀ T(i,aₙ,j) β(n+1)]
-   Expected transition counts from clone-set i via action k to clone-set j
+   Computes $\alpha(n) = P(x_{1:n}, a_{1:n-1}, z_n)$ using only $M \times M$ blocks.
 
-4. **M-step**: T(i,k,j) = Σₙ ξᵢₖⱼ(n) / Σₖ′,ⱼ′,ₙ ξᵢₖ′ⱼ′(n)
-   Normalize expected counts to probability distributions
+2. **Backward pass**:
 
-**Key insight**: Only compute blocks T(xₙ, aₙ, xₙ₊₁) appearing in observed sequence, yielding O(M²|Σ|²TN_a) complexity instead of O((M|Σ|)²TN_a) for standard HMM.
+$$\beta(n) = T(x_n, a_n, x_{n+1}) \, \beta(n+1)$$
+
+   Computes $\beta(n) = P(x_{n+1:N}, a_{n:N-1} \mid z_n)$ using only $M \times M$ blocks.
+
+3. **E-step**:
+
+$$\xi_{ikj}(n) = \frac{\alpha(n) \circ T(i, a_n, j) \circ \beta(n+1)^\top}{\alpha(n)^\top \, T(i, a_n, j) \, \beta(n+1)}$$
+
+   Expected transition counts from clone-set $i$ via action $k$ to clone-set $j$.
+
+4. **M-step**:
+
+$$T(i, k, j) = \frac{\sum_n \xi_{ikj}(n)}{\sum_{k', j', n} \xi_{ik'j'}(n)}$$
+
+   Normalize expected counts to probability distributions.
+
+**Key insight**: Only compute blocks $T(x_n, a_n, x_{n+1})$ appearing in the observed sequence, yielding $O(M^2 |\Sigma|^2 T N_a)$ complexity instead of $O((M|\Sigma|)^2 T N_a)$ for a standard HMM.
 
 **Alternatives**:
-- **Viterbi training**: Hard assignment (argmax) instead of soft expectations for faster convergence
-- **Pseudocount smoothing**: Add κ > 0 to all counts for regularization and preventing zero probabilities
+- **Viterbi training**: Hard assignment ($\arg\max$) instead of soft expectations for faster convergence
+- **Pseudocount smoothing**: Add $\kappa > 0$ to all counts for regularization and to prevent zero probabilities
 - **Gradient descent** (future): Planned enhancement for end-to-end integration with neural networks
 
 ---
